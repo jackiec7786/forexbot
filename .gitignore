@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+*.env
+!*.env.example
+signal_state.json
+*.tmp
+.pytest_cache/
+*.ex4

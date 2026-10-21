@@ -1,0 +1,5 @@
+# Replace with your domain (a free DuckDNS subdomain works).
+# Caddy gets and renews the HTTPS certificate automatically.
+signals.example.com {
+	reverse_proxy 127.0.0.1:8000
+}
