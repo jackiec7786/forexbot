@@ -1,0 +1,20 @@
+[Unit]
+Description=forexbot signal server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=forexbot
+WorkingDirectory=/opt/forexbot/server
+EnvironmentFile=/etc/forexbot.env
+ExecStart=/opt/forexbot/venv/bin/uvicorn app:create_app --factory --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/forexbot/state
+
+[Install]
+WantedBy=multi-user.target

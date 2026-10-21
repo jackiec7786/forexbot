@@ -1,0 +1,23 @@
+//@version=5
+// Sends a webhook when the trend direction flips on a closed bar.
+// Same rule as LocalSignal() in mt4/XAUUSD_TrendScaler.mq4.
+// Run it on the timeframe that matches SignalTimeframe in the EA (default 1 hour).
+indicator("XAUUSD trend flip signal", overlay = true)
+
+lookback = input.int(3, "Lookback bars", minval = 1)
+secret   = input.string("CHANGE_ME", "Webhook secret (same as SIGNAL_SECRET)")
+
+dir      = close > close[lookback] ? 1 : close < close[lookback] ? -1 : 0
+flipUp   = dir == 1 and dir[1] != 1
+flipDown = dir == -1 and dir[1] != -1
+
+plotshape(flipUp,   "Buy flip",  shape.triangleup,   location.belowbar, color.green, size = size.small)
+plotshape(flipDown, "Sell flip", shape.triangledown, location.abovebar, color.red,   size = size.small)
+
+payload(sig) =>
+    '{"secret":"' + secret + '","signal":"' + sig + '","bar_time":' + str.tostring(time) + '}'
+
+if flipUp
+    alert(payload("BUY"), alert.freq_once_per_bar_close)
+if flipDown
+    alert(payload("SELL"), alert.freq_once_per_bar_close)
