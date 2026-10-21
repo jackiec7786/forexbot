@@ -55,7 +55,7 @@ You need an Ubuntu VPS and a domain name pointing at it. A free DuckDNS subdomai
 ```bash
 sudo apt update && sudo apt install -y python3-venv git caddy
 sudo useradd --system --home /opt/forexbot forexbot
-sudo git clone https://github.com/jackiec7786/forexbot /opt/forexbot
+sudo git clone -b Test https://github.com/jackiec7786/forexbot /opt/forexbot
 sudo python3 -m venv /opt/forexbot/venv
 sudo /opt/forexbot/venv/bin/pip install -r /opt/forexbot/server/requirements.txt
 sudo mkdir -p /opt/forexbot/state && sudo chown forexbot /opt/forexbot/state
@@ -73,7 +73,9 @@ sudo systemctl reload caddy
 curl https://YOUR_DOMAIN/health   # should print {"ok":true}
 ```
 
-Update later with: `cd /opt/forexbot && sudo git pull && sudo systemctl restart signal-server`
+Update later with: `cd /opt/forexbot && sudo git pull origin Test && sudo systemctl restart signal-server`
+
+The code lives on the `Test` branch until it has been compiled and backtested. `main` only gets code that has passed those checks.
 
 **TradingView:** add the Pine script to a 1-hour XAUUSD chart and set the secret in its settings. Create an alert with condition **"Any alert() function call"** and webhook URL `https://YOUR_DOMAIN/webhook/tradingview`.
 
