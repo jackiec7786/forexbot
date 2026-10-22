@@ -204,7 +204,8 @@ void TryScaleIn(int type, int total)
    if (!SpreadOk()) return;
 
    gLastScaleAttempt = TimeCurrent();
-   OpenPosition(type, total + 1);
+   if (OpenPosition(type, total + 1))
+      ManageProfitStops(type);   // Protect the earlier positions straight away
 }
 
 bool OpenPosition(int type, int stage)
@@ -328,10 +329,15 @@ void RememberSignal(long id)
 }
 
 //+------------------------------------------------------------------+
-//| Profit stops (owner's rule): once Position 2 is open, all stops  |
-//| go BufferDollars past the latest position's open (above for BUY, |
-//| below for SELL), as soon as price is far enough to place them.   |
-//| With all three open, the level steps on every StepDollars move.  |
+//| Profit stops (owner's rule). Stop levels form a ladder:          |
+//|   latest position's open +/- BufferDollars, +/- whole StepDollars.|
+//| The EA always uses the highest rung MT4 accepts right now:       |
+//|  - The moment Position 2 (or 3) opens, the earlier positions get |
+//|    the rung one step back, which already locks their profit.     |
+//|  - Once price is BufferDollars past the newest open, all stops   |
+//|    move there (Position 2's open + $0.50 for a BUY).             |
+//|  - With all three open, every further StepDollars move lifts all |
+//|    stops by StepDollars.                                         |
 //| Stops only ever tighten and are always in profit.                |
 //+------------------------------------------------------------------+
 void ManageProfitStops(int type)
@@ -345,10 +351,10 @@ void ManageProfitStops(int type)
    double front   = (type == OP_BUY) ? HighestOpen(OP_BUY) : LowestOpen(OP_SELL);
    double moved   = (type == OP_BUY) ? price - front : front - price;
 
-   // Highest step level that can legally be placed right now.
-   double room = moved - BufferDollars - minDist;
-   if (room < 0) return;
-   double steps = (total >= MAX_POSITIONS) ? MathFloor(room / StepDollars) : 0;
+   // Highest rung that can legally be placed right now (-1 = one step back).
+   double steps = MathFloor((moved - BufferDollars - minDist) / StepDollars);
+   if (total < MAX_POSITIONS && steps > 0) steps = 0;   // Stepping starts with all three in
+   if (steps < -1) return;
    double offset = steps * StepDollars + BufferDollars;
    double target = NormalizeDouble((type == OP_BUY) ? front + offset : front - offset, Digits);
 

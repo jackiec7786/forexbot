@@ -22,9 +22,12 @@ An MT4 Expert Advisor for **P's XAU/USD three-position method**. The method belo
 
 **Position 2.** Opens when price has moved $3 in your favour beyond Position 1 and Position 1 is in profit. The size is `0.08 × balance / $100`.
 
-**First profit stop.** As soon as price is far enough, both stops go $0.50 past Position 2's open: above it for a BUY, below it for a SELL. Position 1 then locks about $3.50 and Position 2 about $0.50.
+**Profit stops.**
+- The moment Position 2 opens, Position 1's stop goes to about $0.50 above its own entry, so it's locked in profit at once.
+- As soon as price is $0.50 past Position 2's open, both stops move there: above it for a BUY, below it for a SELL. Position 1 then locks about $3.50 and Position 2 about $0.50.
+- MT4 can't accept a profit stop on the newest position until price is past its entry. $0.50 past is the earliest point.
 
-**Position 3.** Opens only after both earlier positions have a profit stop and price has moved another $3. The size is `0.10 × balance / $100`. All stops then move $0.50 past Position 3's open, and step another $3 with every further $3 move.
+**Position 3.** Opens only after both earlier positions have a profit stop and price has moved another $3. The size is `0.10 × balance / $100`. The same pattern repeats: earlier positions are protected the moment it opens, then all stops move $0.50 past Position 3's open. After that, every further $3 move lifts all stops by $3. That's the same `StepDollars` setting, so adding and stepping stay in sync.
 
 **Rules that never change:**
 - stops only move in your favour and are always in profit
@@ -39,7 +42,7 @@ An MT4 Expert Advisor for **P's XAU/USD three-position method**. The method belo
 
 | Setting | Value | Owner's wording |
 |---|---|---|
-| `TrendShortMinutes` / `TrendLongMinutes` | 30 / 120 | "observe 15–30 min, review 30 min to 2 h" |
+| `TrendShortMinutes` / `TrendLongMinutes` | 30 / 120 (also test 180) | "observe 15–30 min, review 30 min to 2 h", "the prior two to three hours" |
 | `StepDollars` | $3 | "several dollars" |
 | `BufferDollars` | $0.50 | "slightly above break-even of Position 2's open" |
 | Sizes 2 and 3 | grow with balance, same as Position 1 | scaling formula unconfirmed |
