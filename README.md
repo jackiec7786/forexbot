@@ -37,6 +37,26 @@ On each closed 1-hour bar, the bot compares the close with the close 3 bars earl
 
 Attach the bot to an XAUUSD chart on a **demo** account, in LOCAL mode. Make sure it trades the way the backtest did.
 
+### Track it with Myfxbook
+
+Myfxbook is only for tracking. It never affects trades.
+
+1. Create a free account at myfxbook.com.
+2. Go to **Portfolio → Add account → MetaTrader 4** and choose the **auto-update** option. You'll need your broker's server name, your account number and your **investor password**. Nothing gets installed in MT4.
+3. Keep the account **private** until the results are worth showing.
+
+Rules:
+- **Only use the investor (read-only) password.** Never give any website your main trading password. Your broker can show or reset the investor password.
+- **Give the bot its own account.** Manual trades or other bots on the same account get mixed into the stats.
+
+After a month, compare against the backtest:
+
+| Metric | What to look for |
+|---|---|
+| Max drawdown | Close to the backtest. Much worse means the backtest was too optimistic. |
+| Profit factor and number of trades | Roughly in line with the backtest. |
+| Average loss | Capped near the $10 stop. Bigger losses mean the stop isn't working. |
+
 ## Position size and minimum balance
 
 Each position risks `RiskPercentPerStack / MaxPositions` of the balance. With the defaults (1% risk, 3 positions, $10 stop), one 0.01 lot of gold (usually 100 oz) loses $10 at the stop. That means:
