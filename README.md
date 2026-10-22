@@ -1,41 +1,90 @@
 # forexbot
 
-A gold (XAUUSD) trend-flip bot for MT4 with these risk rules:
+An MT4 Expert Advisor for **P's XAU/USD three-position method**. The method belongs to its owner. The default settings follow the owner's rules exactly. A risk-limited alternative is built in as a switch, so both can be compared on the same data.
 
-- every position gets a hard stop loss
-- position size comes from the risk you choose
-- a daily loss limit
-- scale-in and step-trailing stops
+**Nothing here is proven to make money.** Backtest first, then demo, before any real money.
 
 ## What's here
 
 | Path | What it is |
 |---|---|
-| `mt4/XAUUSD_TrendScaler.mq4` | The MT4 bot. Works on its own (LOCAL mode) or with the server (SERVER mode). |
-| `tradingview/trend_flip_signal.pine` | The same signal for TradingView. It sends a webhook to the server. |
-| `server/` | Optional signal server. It holds the latest TradingView signal, drops old ones and blocks trading around high-impact USD news. |
-| `deploy/` | systemd service, Caddy (HTTPS) config and an env template for an Ubuntu VPS. |
+| `mt4/XAUUSD_TrendScaler.mq4` | The EA. Everything the method needs runs inside MT4. |
+| `server/`, `tradingview/`, `deploy/` | **Parked.** An earlier TradingView signal server with a news filter. The current EA doesn't use it. |
 
-## The strategy
+## The method, as coded
 
-On each closed 1-hour bar, the bot compares the close with the close 3 bars earlier. When that direction **flips** (down → up or up → down), it opens a position with a $10 stop. If price moves $3 in your favour and every open position is in profit, it adds another, up to 3. Once a position can lock in $0.50 of profit, its stop trails up in $3 steps.
+**Trend.** The EA checks closed 5-minute bars:
+- price above its level 30 minutes ago **and** above its level 2 hours ago: BUY
+- below both: SELL
+- anything else (sideways or mixed): WAIT
 
-**This rule has not been shown to make money.** Do step 1 before anything else.
+**Position 1.** Opens in the trend direction at `0.04 × balance / $100` lots. There is no stop loss.
 
-## Step 1: Backtest (no server needed)
+**Position 2.** Opens when price has moved $3 in your favour beyond Position 1 and Position 1 is in profit. The size is `0.08 × balance / $100`.
+
+**First profit stop.** As soon as price is far enough, both stops go $0.50 past Position 2's open: above it for a BUY, below it for a SELL. Position 1 then locks about $3.50 and Position 2 about $0.50.
+
+**Position 3.** Opens only after both earlier positions have a profit stop and price has moved another $3. The size is `0.10 × balance / $100`. All stops then move $0.50 past Position 3's open, and step another $3 with every further $3 move.
+
+**Rules that never change:**
+- stops only move in your favour and are always in profit
+- never add to a losing position
+- three positions at most
+
+**Session (per broker day):**
+- at +10% equity, no new Position 1 (open trades keep running)
+- at +25%, close everything and stop for the day
+
+### Test assumptions (agreed, not proven)
+
+| Setting | Value | Owner's wording |
+|---|---|---|
+| `TrendShortMinutes` / `TrendLongMinutes` | 30 / 120 | "observe 15–30 min, review 30 min to 2 h" |
+| `StepDollars` | $3 | "several dollars" |
+| `BufferDollars` | $0.50 | "slightly above break-even of Position 2's open" |
+| Sizes 2 and 3 | grow with balance, same as Position 1 | scaling formula unconfirmed |
+| Session | resets each broker day; +10% only blocks new entries | the 10% vs 25% behaviour is undefined |
+
+These are all inputs, so you can change them without editing code.
+
+### Not built yet
+
+- **Newsday mode** (0.10 / 0.10 / 0.10, +50% target). Its rules are still undefined.
+- **An exit when a trade goes against you or the trend fails** (open item 6 in the handoff).
+
+## The risk you need to see before testing
+
+The numbers below use the handoff's own example: gold at $4,000, 100 oz per lot, and a broker that closes positions when margin level falls to 50%. Check your broker's real values.
+
+| Leverage | Margin for Position 1 | Margin for all three | Can the formula run? |
+|---|---|---|---|
+| 1:50 | 3.2 × balance | 17.6 × balance | **No.** Position 1 is rejected at any balance. |
+| 1:500 | 0.32 × balance | 1.76 × balance | Positions 1 and 2 only. Position 3 is skipped. |
+| 1:1000 | 0.16 × balance | 0.88 × balance | Yes, but margin level is very thin. |
+
+The EA never shrinks the formula to make it fit. It skips the position and logs why.
+
+**With no losing stop, Position 1 alone loses about 4% of the balance per $1 gold moves against it.** At 1:500 or 1:1000, the broker's stop-out comes after roughly a **$21–23 move against you**, which wipes most of the account. Gold can move that much in a single day.
+
+That's why the alternative exists. The backtest should show which version survives.
+
+## Step 1: Backtest both versions
 
 1. Copy `mt4/XAUUSD_TrendScaler.mq4` into MT4's `MQL4/Experts` folder (File → Open Data Folder) and compile it in MetaEditor.
-2. Strategy Tester: XAUUSD, model **Every tick**, **at least 2 years**, `SignalSource = LOCAL`.
-3. Look at:
-   - **Number of trades:** you need 100 or more before the result means anything.
-   - **Profit factor:** below 1.2 means no real edge once costs are counted.
-   - **Max drawdown:** could you live through that with real money?
-   - **Out-of-sample check:** tune the settings on 2023–2024 only, then run 2025 unchanged. If 2025 collapses, the settings were fitted to noise.
-4. If it fails, stop. Change the idea, not the plumbing.
+2. Strategy Tester: XAUUSD, model **Every tick**, **at least 2 years**, the same dates for both runs.
+   - **Run A (owner's method):** default inputs.
+   - **Run B (risk-limited):** `SizingMode = RISK_PERCENT`, `SafetyStopDollars = 10`, `RiskPercentPerStack = 1`, `DailyLossLimitPercent = 3`.
+3. Set the tester's deposit and leverage to what you'd really use. At 1:50, Run A will skip every trade (see the table above).
+4. Compare:
+   - **Number of trades:** 100 or more before the result means anything.
+   - **Profit factor:** below 1.2 means no real edge after costs.
+   - **Max drawdown,** and whether the account ever hit a margin stop-out.
+   - **Out-of-sample check:** tune on 2023–2024 only, then run 2025 unchanged.
+5. If both fail, stop. Change the idea, not the code.
 
 ## Step 2: Demo account for at least 1 month
 
-Attach the bot to an XAUUSD chart on a **demo** account, in LOCAL mode. Make sure it trades the way the backtest did.
+Attach the EA to an XAUUSD chart on a **demo** account with the version that passed. Check that it trades the way the backtest did.
 
 ### Track it with Myfxbook
 
@@ -55,76 +104,8 @@ After a month, compare against the backtest:
 |---|---|
 | Max drawdown | Close to the backtest. Much worse means the backtest was too optimistic. |
 | Profit factor and number of trades | Roughly in line with the backtest. |
-| Average loss | Capped near the $10 stop. Bigger losses mean the stop isn't working. |
+| Biggest loss | Run A: how close it came to a stop-out. Run B: capped near the $10 safety stop. |
 
-## Position size and minimum balance
+## Parked: signal server
 
-Each position risks `RiskPercentPerStack / MaxPositions` of the balance. With the defaults (1% risk, 3 positions, $10 stop), one 0.01 lot of gold (usually 100 oz) loses $10 at the stop. That means:
-
-- **About $3,000 is the smallest balance that can trade the defaults.**
-- Below that, the bot skips trades and says why in the Experts log.
-
-That is the point. Don't raise the risk to make it trade. Use `MaxPositions = 1` or a smaller stop instead.
-
-## Step 3 (optional): Signal server
-
-You only need this for TradingView signals or the news filter. LOCAL mode doesn't use it.
-
-You need an Ubuntu VPS and a domain name pointing at it. A free DuckDNS subdomain is fine. TradingView only sends webhooks to ports 80 and 443, and MT4 needs a valid HTTPS certificate.
-
-```bash
-sudo apt update && sudo apt install -y python3-venv git caddy
-sudo useradd --system --home /opt/forexbot forexbot
-sudo git clone -b Test https://github.com/jackiec7786/forexbot /opt/forexbot
-sudo python3 -m venv /opt/forexbot/venv
-sudo /opt/forexbot/venv/bin/pip install -r /opt/forexbot/server/requirements.txt
-sudo mkdir -p /opt/forexbot/state && sudo chown forexbot /opt/forexbot/state
-
-sudo cp /opt/forexbot/deploy/forexbot.env.example /etc/forexbot.env
-openssl rand -hex 24            # paste this as SIGNAL_SECRET in /etc/forexbot.env
-sudo nano /etc/forexbot.env
-sudo chmod 600 /etc/forexbot.env
-
-sudo cp /opt/forexbot/deploy/signal-server.service /etc/systemd/system/
-sudo systemctl enable --now signal-server
-sudo cp /opt/forexbot/deploy/Caddyfile /etc/caddy/Caddyfile   # set your domain first
-sudo systemctl reload caddy
-
-curl https://YOUR_DOMAIN/health   # should print {"ok":true}
-```
-
-Update later with: `cd /opt/forexbot && sudo git pull origin Test && sudo systemctl restart signal-server`
-
-The code lives on the `Test` branch until it has been compiled and backtested. `main` only gets code that has passed those checks.
-
-**TradingView:** add the Pine script to a 1-hour XAUUSD chart and set the secret in its settings. Create an alert with condition **"Any alert() function call"** and webhook URL `https://YOUR_DOMAIN/webhook/tradingview`.
-
-**MT4:** go to Tools → Options → Expert Advisors, tick "Allow WebRequest" and add `https://YOUR_DOMAIN`. Then set `SignalSource = SERVER`, `ServerUrl = https://YOUR_DOMAIN/api/signal` and `ServerSecret` to the same secret.
-
-**Debugging:** `curl -H "X-Signal-Secret: YOUR_SECRET" https://YOUR_DOMAIN/api/status` shows the current answer and why.
-
-### How the server decides
-
-- Only `BUY` and `SELL` alerts are accepted, and only with the right secret.
-- A signal older than 15 minutes is ignored, so there are no late entries.
-- It blocks trading 30 minutes before and after high-impact USD news, using the Forex Factory calendar.
-- If the calendar can't be loaded, it blocks trading. It fails safe.
-- Each signal has an ID, so MT4 trades it once at most, even after a restart.
-
-## Running the server tests
-
-```bash
-cd server
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
-.venv/bin/pytest
-```
-
-## Changes from the earlier draft
-
-- **Hard stop loss on every position.** Before, a losing trade had no stop. If a broker rejects a stop on a market order, the bot attaches it right after opening, or closes the trade.
-- **Sizing from risk.** The old `balance / 100 × 0.04` put 40% of the account at risk on a $10 move.
-- **Daily loss limit** instead of a 25% session target. It survives restarts.
-- **No AI gatekeeper.** A plain GPT call can't see the news, the old OpenAI code crashed on current versions, and it was slower than MT4's 1-second timeout. A news calendar does the job reliably.
-- **No cTrader.** It ran the same rule on the same prices, so it never confirmed anything.
-- **Signals have an ID and an age limit.** No re-entering on yesterday's signal.
-- **Server security:** HTTPS, the secret comes from an environment variable and travels in a header, and the server runs as a normal user, not root.
+`server/` holds a FastAPI server. It takes TradingView alerts, ignores signals older than 15 minutes and blocks trading 30 minutes around high-impact USD news. It's tested (`cd server && pytest`) but **not connected to the current EA**: the method reads the trend in MT4 itself. `deploy/` has its systemd and Caddy files. The news filter could come back later as an optional check if a backtest shows it helps.

@@ -1,79 +1,93 @@
 //+------------------------------------------------------------------+
 //|                                          XAUUSD_TrendScaler.mq4  |
-//|  Gold trend-flip EA with hard stop loss, risk-based sizing,      |
-//|  daily loss limit, scale-in and step-trailing stops.             |
+//|  P's XAU/USD three-position method.                              |
+//|                                                                  |
+//|  Default inputs = the owner's method:                            |
+//|    - Position sizes 0.04 / 0.08 / 0.10 lots per $100 balance     |
+//|    - No losing stop. Stops are only ever placed in profit.       |
+//|  Optional alternative (for comparison in the Strategy Tester):   |
+//|    SizingMode = RISK_PERCENT and SafetyStopDollars > 0.          |
+//|                                                                  |
+//|  Numbers marked [TEST] are test assumptions chosen with the      |
+//|  owner, not proven values.                                       |
 //+------------------------------------------------------------------+
 #property strict
-#property description "Trend-flip EA for XAUUSD. Every position has a hard stop loss."
-#property description "Use SignalSource = LOCAL for the Strategy Tester (WebRequest does not work there)."
+#property description "P's XAU/USD three-position method. Defaults follow the owner's rules (no losing stop)."
+#property description "Set SizingMode = RISK_PERCENT and SafetyStopDollars > 0 to test the risk-limited alternative."
 
-enum ENUM_SIGNAL_SOURCE
+enum ENUM_SIZING_MODE
 {
-   SOURCE_LOCAL  = 0, // Local: compute the trend flip inside MT4
-   SOURCE_SERVER = 1  // Server: ask the signal server (TradingView + news filter)
+   SIZING_FORMULA      = 0, // Formula: lots per $100 of balance (owner's method)
+   SIZING_RISK_PERCENT = 1  // Risk %: size from SafetyStopDollars (alternative)
 };
 
-input string             _s1 = "===== Signal =====";
-input ENUM_SIGNAL_SOURCE SignalSource    = SOURCE_LOCAL;
-input ENUM_TIMEFRAMES    SignalTimeframe = PERIOD_H1;
-input int                LookbackBars    = 3;     // Compare close now vs close N bars ago
+input string          _s1 = "===== Trend (line graph) =====";
+input ENUM_TIMEFRAMES TrendTimeframe    = PERIOD_M5;
+input int             TrendShortMinutes = 30;   // [TEST] Price must be beyond its level this many minutes ago...
+input int             TrendLongMinutes  = 120;  // [TEST] ...and beyond its level this many minutes ago
 
-input string _s2 = "===== Risk =====";
-input double RiskPercentPerStack   = 1.0;   // % of balance lost if ALL positions hit their initial stop
-input double StopLossDollars       = 10.0;  // Initial stop distance in price ($ per oz)
-input double DailyLossLimitPercent = 3.0;   // Close everything and stop for the day at this loss
-input double MaxSpreadDollars      = 0.60;  // Skip entries when spread is wider than this
+input string           _s2 = "===== Position sizes =====";
+input ENUM_SIZING_MODE SizingMode      = SIZING_FORMULA;
+input double           Lots1Per100     = 0.04;  // Position 1 lots per $100 balance
+input double           Lots2Per100     = 0.08;  // Position 2 lots per $100 balance
+input double           Lots3Per100     = 0.10;  // Position 3 lots per $100 balance
 
-input string _s3 = "===== Scaling & trailing =====";
-input int    MaxPositions  = 3;     // Positions per direction, including the first
-input double ScaleDistance = 3.0;   // $ move in favour before adding the next position
-input double LockInDollars = 0.50;  // Profit locked per position once the stop starts trailing
+input string _s3 = "===== Scaling and profit stops =====";
+input double StepDollars   = 3.0;   // [TEST] "Several dollars": favourable move before the next position
+input double BufferDollars = 0.50;  // [TEST] "Slightly": stop distance past the latest position's open
 
-input string _s4 = "===== Server (SignalSource = SERVER) =====";
-input string ServerUrl       = "https://your-domain.example/api/signal";
-input string ServerSecret    = "";   // Same value as SIGNAL_SECRET on the server
-input int    PollSeconds     = 30;
-input int    ServerTimeoutMs = 3000;
+input string _s4 = "===== Session (owner targets) =====";
+input double SessionGoalPercent       = 10.0;  // At this gain: no new Position 1 (open trades keep running)
+input double SessionProfitStopPercent = 25.0;  // At this gain: close everything, done for the day
 
-input string _s5 = "===== General =====";
-input int MagicNumber    = 333333;
-input int SlippagePoints = 30;
+input string _s5 = "===== Alternative: risk limits (0 = off) =====";
+input double SafetyStopDollars     = 0.0;  // Losing stop on every position. 0 = owner's method (none)
+input double RiskPercentPerStack   = 1.0;  // Used only with SIZING_RISK_PERCENT
+input double DailyLossLimitPercent = 0.0;  // Close everything at this loss. 0 = off
 
-#define NO_SIGNAL -1
+input string _s6 = "===== General =====";
+input double MaxSpreadDollars = 0.60;
+input int    MagicNumber      = 333333;
+input int    SlippagePoints   = 30;
+
+#define NONE          -1
+#define MAX_POSITIONS 3     // The method has exactly three positions. No fourth.
 
 long     gLastSignalId     = 0;
-datetime gLastPoll         = 0;
 datetime gLastScaleAttempt = 0;
-string   gKeyDay, gKeyDayStart, gKeyLastId;
+string   gKeyDay, gKeyDayStart, gKeyLocked, gKeyLastId;
 
 //+------------------------------------------------------------------+
 int OnInit()
 {
-   if (LookbackBars < 1 || MaxPositions < 1 || StopLossDollars <= 0 ||
-       RiskPercentPerStack <= 0 || ScaleDistance <= 0)
+   int tfMinutes = PeriodSeconds(TrendTimeframe) / 60;
+   if (tfMinutes <= 0 || TrendShortMinutes < tfMinutes || TrendLongMinutes <= TrendShortMinutes ||
+       TrendShortMinutes % tfMinutes != 0 || TrendLongMinutes % tfMinutes != 0)
    {
-      Print("Invalid inputs. Check LookbackBars, MaxPositions, StopLossDollars, RiskPercentPerStack, ScaleDistance.");
+      Print("Trend minutes must be multiples of the trend timeframe, with Long > Short.");
       return INIT_PARAMETERS_INCORRECT;
    }
-   if (SignalSource == SOURCE_SERVER && IsTesting())
+   if (StepDollars <= 0 || BufferDollars <= 0 || BufferDollars >= StepDollars)
    {
-      Print("WebRequest does not work in the Strategy Tester. Use SignalSource = LOCAL to backtest.");
+      Print("Need StepDollars > BufferDollars > 0.");
       return INIT_PARAMETERS_INCORRECT;
    }
-   if (SignalSource == SOURCE_SERVER && StringLen(ServerSecret) < 24)
+   if (SizingMode == SIZING_RISK_PERCENT && (SafetyStopDollars <= 0 || RiskPercentPerStack <= 0))
    {
-      Print("ServerSecret must be set (at least 24 characters, same as SIGNAL_SECRET on the server).");
+      Print("RISK_PERCENT sizing needs SafetyStopDollars > 0 and RiskPercentPerStack > 0.");
       return INIT_PARAMETERS_INCORRECT;
    }
 
-   // Persist state in terminal global variables so a restart does not
-   // reset the daily loss limit or re-trade a signal already used.
    string prefix = "TS_" + IntegerToString(MagicNumber) + "_" + Symbol() + "_";
    gKeyDay      = prefix + "day";
    gKeyDayStart = prefix + "daystart";
+   gKeyLocked   = prefix + "locked";
    gKeyLastId   = prefix + "lastid";
    if (!IsTesting() && GlobalVariableCheck(gKeyLastId))
       gLastSignalId = (long)GlobalVariableGet(gKeyLastId);
+
+   if (SafetyStopDollars <= 0)
+      Print("Owner's method: no losing stop. A trade that goes against you stays open until it recovers or the broker's margin stop-out closes it.");
 
    return INIT_SUCCEEDED;
 }
@@ -81,144 +95,223 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnTick()
 {
-   if (DailyLossLimitHit())
-   {
-      if (CountPositions(NO_SIGNAL) > 0)
-      {
-         Print("Daily loss limit of ", DoubleToString(DailyLossLimitPercent, 1), "% hit. Closing all positions until tomorrow.");
-         CloseAll();
-      }
-      return;
-   }
+   if (!SessionAllowsTrading()) return;
 
    int buys  = CountPositions(OP_BUY);
    int sells = CountPositions(OP_SELL);
 
    if (buys + sells == 0)
    {
-      TryOpenFirst();
+      TryOpenPosition1();
       return;
    }
 
    int type = (buys > 0) ? OP_BUY : OP_SELL;
-   ManageTrailingStops(type);
+   ManageProfitStops(type);
    TryScaleIn(type, buys + sells);
 }
 
 //+------------------------------------------------------------------+
-//| Daily loss limit (measured from balance at the start of the day) |
+//| Session: resets at the start of each broker day.                 |
+//| +Goal%: no new Position 1. +ProfitStop%: close all, lock the day.|
+//| Optional -DailyLoss%: close all, lock the day.                   |
 //+------------------------------------------------------------------+
-bool DailyLossLimitHit()
+bool SessionAllowsTrading()
 {
-   if (DailyLossLimitPercent <= 0) return false;
-
    datetime today = iTime(Symbol(), PERIOD_D1, 0);
    if (!GlobalVariableCheck(gKeyDay) || (datetime)GlobalVariableGet(gKeyDay) != today)
    {
       GlobalVariableSet(gKeyDay, (double)today);
       GlobalVariableSet(gKeyDayStart, AccountBalance());
+      GlobalVariableSet(gKeyLocked, 0);
    }
-   double dayStart = GlobalVariableGet(gKeyDayStart);
-   return AccountEquity() <= dayStart * (1.0 - DailyLossLimitPercent / 100.0);
+   if (GlobalVariableGet(gKeyLocked) > 0) return false;
+
+   double start  = GlobalVariableGet(gKeyDayStart);
+   double equity = AccountEquity();
+
+   if (SessionProfitStopPercent > 0 && equity >= start * (1.0 + SessionProfitStopPercent / 100.0))
+   {
+      Print("Session profit stop (+", DoubleToString(SessionProfitStopPercent, 1), "%) reached. Closing all, done for today.");
+      CloseAll();
+      GlobalVariableSet(gKeyLocked, 1);
+      return false;
+   }
+   if (DailyLossLimitPercent > 0 && equity <= start * (1.0 - DailyLossLimitPercent / 100.0))
+   {
+      Print("Daily loss limit (-", DoubleToString(DailyLossLimitPercent, 1), "%) hit. Closing all, done for today.");
+      CloseAll();
+      GlobalVariableSet(gKeyLocked, 1);
+      return false;
+   }
+   return true;
+}
+
+bool SessionGoalReached()
+{
+   if (SessionGoalPercent <= 0) return false;
+   return AccountEquity() >= GlobalVariableGet(gKeyDayStart) * (1.0 + SessionGoalPercent / 100.0);
+}
+
+//+------------------------------------------------------------------+
+//| Trend: on closed bars, price above its level both TrendShort and |
+//| TrendLong minutes ago = BUY; below both = SELL; else WAIT.       |
+//+------------------------------------------------------------------+
+int TrendDirection()
+{
+   int tfMinutes = PeriodSeconds(TrendTimeframe) / 60;
+   double now   = iClose(Symbol(), TrendTimeframe, 1);
+   double pastShort = iClose(Symbol(), TrendTimeframe, 1 + TrendShortMinutes / tfMinutes);
+   double pastLong  = iClose(Symbol(), TrendTimeframe, 1 + TrendLongMinutes / tfMinutes);
+   if (now <= 0 || pastShort <= 0 || pastLong <= 0) return NONE;
+
+   if (now > pastShort && now > pastLong) return OP_BUY;
+   if (now < pastShort && now < pastLong) return OP_SELL;
+   return NONE;   // Sideways or conflicting: WAIT
 }
 
 //+------------------------------------------------------------------+
 //| Entries                                                          |
 //+------------------------------------------------------------------+
-void TryOpenFirst()
+void TryOpenPosition1()
 {
-   long id = 0;
-   int signal = GetSignal(id);
-   if (signal == NO_SIGNAL || id == 0 || id == gLastSignalId) return;
-   if (!SpreadOk()) return;   // Signal not used yet; retry on a later tick
+   if (SessionGoalReached()) return;
 
-   OpenPosition(signal, "entry");
-   // One attempt per signal, success or not, so a failing order can never loop.
-   RememberSignal(id);
+   long barId = (long)iTime(Symbol(), TrendTimeframe, 1);
+   if (barId == 0 || barId == gLastSignalId) return;   // At most one entry per closed bar
+
+   int trend = TrendDirection();
+   if (trend == NONE) return;
+   if (!SpreadOk()) return;
+
+   OpenPosition(trend, 1);
+   RememberSignal(barId);   // One attempt per bar, success or not
 }
 
+// Gate: favourable move of StepDollars beyond the latest position,
+// every position in profit, and (from Position 3) every position
+// already protected by a profit stop.
 void TryScaleIn(int type, int total)
 {
-   if (total >= MaxPositions) return;
-   if (!AllPositionsInProfit()) return;
+   if (total >= MAX_POSITIONS) return;
    if (TimeCurrent() < gLastScaleAttempt + 60) return;
+   if (!AllPositionsInProfit()) return;
+   if (total >= 2 && !AllPositionsProtected(type)) return;
 
    RefreshRates();
-   double moved = (type == OP_BUY) ? Bid - HighestOpen(OP_BUY)
-                                   : LowestOpen(OP_SELL) - Ask;
-   if (moved < ScaleDistance) return;
+   double moved = (type == OP_BUY) ? Bid - HighestOpen(OP_BUY) : LowestOpen(OP_SELL) - Ask;
+   if (moved < StepDollars) return;
    if (!SpreadOk()) return;
 
    gLastScaleAttempt = TimeCurrent();
-   OpenPosition(type, "scale-in");
+   OpenPosition(type, total + 1);
 }
 
-bool OpenPosition(int type, string tag)
+bool OpenPosition(int type, int stage)
 {
-   double lots = LotsForRisk();
-   if (lots <= 0)
+   double lots = LotsForStage(stage);
+   if (lots <= 0) return false;
+
+   ResetLastError();
+   if (AccountFreeMarginCheck(Symbol(), type, lots) <= 0 || GetLastError() == ERR_NOT_ENOUGH_MONEY)
    {
-      Print("Position size is below the broker minimum at this risk. Skipping. ",
-            "Increase balance, or lower StopLossDollars / MaxPositions.");
+      Print("Position ", stage, " skipped: not enough margin for ", DoubleToString(lots, 2),
+            " lots at this leverage. The formula size was not reduced.");
       return false;
    }
 
    RefreshRates();
    double price = (type == OP_BUY) ? Ask : Bid;
-   double sl    = NormalizeDouble((type == OP_BUY) ? price - StopLossDollars : price + StopLossDollars, Digits);
-   color  clr   = (type == OP_BUY) ? clrBlue : clrRed;
+   double sl    = 0;
+   if (SafetyStopDollars > 0)
+      sl = NormalizeDouble((type == OP_BUY) ? price - SafetyStopDollars : price + SafetyStopDollars, Digits);
+
+   string tag = "Pos " + IntegerToString(stage);
+   color  clr = (type == OP_BUY) ? clrBlue : clrRed;
 
    int ticket = OrderSend(Symbol(), type, lots, price, SlippagePoints, sl, 0, tag, MagicNumber, 0, clr);
    if (ticket >= 0) return true;
 
    int err = GetLastError();
-   if (err != ERR_INVALID_STOPS)
+   if (sl == 0 || err != ERR_INVALID_STOPS)
    {
-      Print("OrderSend failed. Error ", err);
+      Print(tag, " OrderSend failed. Error ", err);
       return false;
    }
 
-   // Some ECN accounts reject a stop loss on market orders. Open without it,
-   // then attach it at once. If that fails, close: never hold an unprotected trade.
+   // Some ECN accounts reject a stop on market orders: open, then attach
+   // the safety stop. If that fails, close: never leave it unprotected
+   // when the safety stop is switched on.
    RefreshRates();
    price  = (type == OP_BUY) ? Ask : Bid;
    ticket = OrderSend(Symbol(), type, lots, price, SlippagePoints, 0, 0, tag, MagicNumber, 0, clr);
    if (ticket < 0)
    {
-      Print("OrderSend (no SL) failed. Error ", GetLastError());
+      Print(tag, " OrderSend (no SL) failed. Error ", GetLastError());
       return false;
    }
    if (!OrderSelect(ticket, SELECT_BY_TICKET)) return false;
 
-   sl = NormalizeDouble((type == OP_BUY) ? OrderOpenPrice() - StopLossDollars
-                                         : OrderOpenPrice() + StopLossDollars, Digits);
+   sl = NormalizeDouble((type == OP_BUY) ? OrderOpenPrice() - SafetyStopDollars
+                                         : OrderOpenPrice() + SafetyStopDollars, Digits);
    if (OrderModify(ticket, OrderOpenPrice(), sl, 0, 0, clrGreen)) return true;
 
-   Print("Could not attach stop loss (error ", GetLastError(), "). Closing the position.");
+   Print("Could not attach safety stop (error ", GetLastError(), "). Closing ", tag, ".");
    RefreshRates();
-   double closePrice = (type == OP_BUY) ? Bid : Ask;
-   if (!OrderClose(ticket, OrderLots(), closePrice, SlippagePoints, clrWhite))
-      Print("URGENT: failed to close unprotected ticket ", ticket, ". Error ", GetLastError());
+   if (!OrderClose(ticket, OrderLots(), (type == OP_BUY) ? Bid : Ask, SlippagePoints, clrWhite))
+      Print("URGENT: failed to close ticket ", ticket, ". Error ", GetLastError());
    return false;
 }
 
 //+------------------------------------------------------------------+
-//| Position size: each position risks RiskPercentPerStack/MaxPositions |
+//| Sizes                                                            |
 //+------------------------------------------------------------------+
-double LotsForRisk()
+double StageWeight(int stage)
 {
-   double tickValue = MarketInfo(Symbol(), MODE_TICKVALUE);
-   double tickSize  = MarketInfo(Symbol(), MODE_TICKSIZE);
-   double step      = MarketInfo(Symbol(), MODE_LOTSTEP);
-   if (tickValue <= 0 || tickSize <= 0 || step <= 0) return 0;
+   if (stage == 1) return Lots1Per100;
+   if (stage == 2) return Lots2Per100;
+   return Lots3Per100;
+}
 
-   double riskMoney  = AccountBalance() * RiskPercentPerStack / 100.0 / MaxPositions;
-   double lossPerLot = StopLossDollars / tickSize * tickValue;
-   double lots       = MathFloor(riskMoney / lossPerLot / step) * step;  // Round DOWN
-
+double LotsForStage(int stage)
+{
+   double step   = MarketInfo(Symbol(), MODE_LOTSTEP);
+   double minLot = MarketInfo(Symbol(), MODE_MINLOT);
    double maxLot = MarketInfo(Symbol(), MODE_MAXLOT);
-   if (lots > maxLot) lots = maxLot;
-   if (lots < MarketInfo(Symbol(), MODE_MINLOT)) return 0;
+   if (step <= 0) return 0;
+
+   double wanted;
+   if (SizingMode == SIZING_FORMULA)
+   {
+      wanted = StageWeight(stage) * AccountBalance() / 100.0;
+   }
+   else
+   {
+      // Total loss if all three positions hit SafetyStopDollars = RiskPercentPerStack,
+      // split in the same 0.04 : 0.08 : 0.10 proportions as the formula.
+      double tickValue = MarketInfo(Symbol(), MODE_TICKVALUE);
+      double tickSize  = MarketInfo(Symbol(), MODE_TICKSIZE);
+      if (tickValue <= 0 || tickSize <= 0) return 0;
+      double share      = StageWeight(stage) / (Lots1Per100 + Lots2Per100 + Lots3Per100);
+      double riskMoney  = AccountBalance() * RiskPercentPerStack / 100.0 * share;
+      double lossPerLot = SafetyStopDollars / tickSize * tickValue;
+      wanted = riskMoney / lossPerLot;
+   }
+
+   double lots = MathFloor(wanted / step + 1e-9) * step;
+   if (MathAbs(lots - wanted) > 1e-9)
+      Print("Position ", stage, ": wanted ", DoubleToString(wanted, 4), " lots, broker lot step allows ",
+            DoubleToString(lots, 2), ".");
+   if (lots > maxLot)
+   {
+      Print("Position ", stage, ": ", DoubleToString(lots, 2), " lots is above the broker maximum. Skipped.");
+      return 0;
+   }
+   if (lots < minLot)
+   {
+      Print("Position ", stage, ": ", DoubleToString(wanted, 4), " lots is below the broker minimum. Skipped.");
+      return 0;
+   }
    return NormalizeDouble(lots, 2);
 }
 
@@ -228,68 +321,6 @@ bool SpreadOk()
    return (Ask - Bid) <= MaxSpreadDollars;
 }
 
-//+------------------------------------------------------------------+
-//| Signals                                                          |
-//+------------------------------------------------------------------+
-int GetSignal(long &id)
-{
-   if (SignalSource == SOURCE_LOCAL) return LocalSignal(id);
-   return ServerSignal(id);
-}
-
-// Trend direction on a closed bar: close vs close LookbackBars earlier.
-int Direction(int shift)
-{
-   double now  = iClose(Symbol(), SignalTimeframe, shift);
-   double past = iClose(Symbol(), SignalTimeframe, shift + LookbackBars);
-   if (now <= 0 || past <= 0) return NO_SIGNAL;
-   if (now > past) return OP_BUY;
-   if (now < past) return OP_SELL;
-   return NO_SIGNAL;
-}
-
-// Signal only when the direction flips on the last closed bar.
-// Matches tradingview/trend_flip_signal.pine.
-int LocalSignal(long &id)
-{
-   id = (long)iTime(Symbol(), SignalTimeframe, 1);
-   int d1 = Direction(1);
-   int d2 = Direction(2);
-   if (d1 != NO_SIGNAL && d1 != d2) return d1;
-   return NO_SIGNAL;
-}
-
-// Server replies "BUY|<id>", "SELL|<id>" or "WAIT|0".
-// The server already returns WAIT for stale signals and during news.
-int ServerSignal(long &id)
-{
-   id = 0;
-   if (TimeLocal() < gLastPoll + PollSeconds) return NO_SIGNAL;
-   gLastPoll = TimeLocal();
-
-   char   post[], result[];
-   string responseHeaders;
-   string headers = "X-Signal-Secret: " + ServerSecret + "\r\n";
-
-   ResetLastError();
-   int code = WebRequest("GET", ServerUrl, headers, ServerTimeoutMs, post, result, responseHeaders);
-   if (code != 200)
-   {
-      Print("Signal server request failed. HTTP ", code, ", error ", GetLastError(),
-            ". Is the server URL added in Tools > Options > Expert Advisors?");
-      return NO_SIGNAL;
-   }
-
-   string body = CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
-   string parts[];
-   if (StringSplit(body, '|', parts) != 2) return NO_SIGNAL;
-
-   id = (long)StringToInteger(parts[1]);
-   if (parts[0] == "BUY")  return OP_BUY;
-   if (parts[0] == "SELL") return OP_SELL;
-   return NO_SIGNAL;
-}
-
 void RememberSignal(long id)
 {
    gLastSignalId = id;
@@ -297,55 +328,47 @@ void RememberSignal(long id)
 }
 
 //+------------------------------------------------------------------+
-//| Step-trailing stop. Stops only ever tighten, and only move once  |
-//| they lock in LockInDollars of profit on that position.           |
+//| Profit stops (owner's rule): once Position 2 is open, all stops  |
+//| go BufferDollars past the latest position's open (above for BUY, |
+//| below for SELL), as soon as price is far enough to place them.   |
+//| With all three open, the level steps on every StepDollars move.  |
+//| Stops only ever tighten and are always in profit.                |
 //+------------------------------------------------------------------+
-void ManageTrailingStops(int type)
+void ManageProfitStops(int type)
 {
    int total = CountPositions(type);
-   if (total == 0) return;
+   if (total < 2) return;   // Position 1 alone: no stop under the owner's rule
 
    RefreshRates();
-   double price     = (type == OP_BUY) ? Bid : Ask;
-   double stopLevel = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
-   double target;
+   double price   = (type == OP_BUY) ? Bid : Ask;
+   double minDist = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
+   double front   = (type == OP_BUY) ? HighestOpen(OP_BUY) : LowestOpen(OP_SELL);
+   double moved   = (type == OP_BUY) ? price - front : front - price;
 
-   if (type == OP_BUY)
-   {
-      double front = HighestOpen(OP_BUY);
-      double ref   = front;
-      if (total >= MaxPositions && price > front)
-         ref = front + MathFloor((price - front) / ScaleDistance) * ScaleDistance;
-      target = NormalizeDouble(ref - ScaleDistance + LockInDollars, Digits);
-      if (price - target < stopLevel) return;
-   }
-   else
-   {
-      double front = LowestOpen(OP_SELL);
-      double ref   = front;
-      if (total >= MaxPositions && price < front)
-         ref = front - MathFloor((front - price) / ScaleDistance) * ScaleDistance;
-      target = NormalizeDouble(ref + ScaleDistance - LockInDollars, Digits);
-      if (target - price < stopLevel) return;
-   }
+   // Highest step level that can legally be placed right now.
+   double room = moved - BufferDollars - minDist;
+   if (room < 0) return;
+   double steps = (total >= MAX_POSITIONS) ? MathFloor(room / StepDollars) : 0;
+   double offset = steps * StepDollars + BufferDollars;
+   double target = NormalizeDouble((type == OP_BUY) ? front + offset : front - offset, Digits);
 
    for (int i = OrdersTotal() - 1; i >= 0; i--)
    {
       if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES) || !IsOurs() || OrderType() != type) continue;
 
-      bool tighter;
+      bool inProfit, tighter;
       if (type == OP_BUY)
       {
-         if (target < OrderOpenPrice() + LockInDollars) continue;
-         tighter = (OrderStopLoss() == 0 || target > OrderStopLoss() + Point / 2.0);
+         inProfit = target > OrderOpenPrice();
+         tighter  = OrderStopLoss() == 0 || target > OrderStopLoss() + Point / 2.0;
       }
       else
       {
-         if (target > OrderOpenPrice() - LockInDollars) continue;
-         tighter = (OrderStopLoss() == 0 || target < OrderStopLoss() - Point / 2.0);
+         inProfit = target < OrderOpenPrice();
+         tighter  = OrderStopLoss() == 0 || target < OrderStopLoss() - Point / 2.0;
       }
 
-      if (tighter && !OrderModify(OrderTicket(), OrderOpenPrice(), target, 0, 0, clrGreen))
+      if (inProfit && tighter && !OrderModify(OrderTicket(), OrderOpenPrice(), target, 0, 0, clrGreen))
          Print("OrderModify failed on ticket ", OrderTicket(), ". Error ", GetLastError());
    }
 }
@@ -358,7 +381,7 @@ bool IsOurs()
    return OrderSymbol() == Symbol() && OrderMagicNumber() == MagicNumber;
 }
 
-// type = OP_BUY, OP_SELL, or NO_SIGNAL for both.
+// type = OP_BUY, OP_SELL, or NONE for both.
 int CountPositions(int type)
 {
    int count = 0;
@@ -366,7 +389,7 @@ int CountPositions(int type)
    {
       if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES) || !IsOurs()) continue;
       if (OrderType() != OP_BUY && OrderType() != OP_SELL) continue;
-      if (type == NO_SIGNAL || OrderType() == type) count++;
+      if (type == NONE || OrderType() == type) count++;
    }
    return count;
 }
@@ -394,6 +417,19 @@ bool AllPositionsInProfit()
    for (int i = OrdersTotal() - 1; i >= 0; i--)
       if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES) && IsOurs())
          if (OrderProfit() + OrderSwap() + OrderCommission() <= 0) return false;
+   return true;
+}
+
+// Every position has a stop on the profit side of its open price.
+bool AllPositionsProtected(int type)
+{
+   for (int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES) || !IsOurs() || OrderType() != type) continue;
+      if (OrderStopLoss() == 0) return false;
+      if (type == OP_BUY  && OrderStopLoss() <= OrderOpenPrice()) return false;
+      if (type == OP_SELL && OrderStopLoss() >= OrderOpenPrice()) return false;
+   }
    return true;
 }
 
