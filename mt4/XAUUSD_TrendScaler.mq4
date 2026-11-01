@@ -55,6 +55,8 @@ input int    SlippagePoints   = 30;
 
 long     gLastSignalId     = 0;
 datetime gLastScaleAttempt = 0;
+datetime gLastTickLocal    = 0;
+string   gStatus           = "Starting up";
 string   gKeyDay, gKeyDayStart, gKeyLocked, gKeyLastId;
 
 //+------------------------------------------------------------------+
@@ -89,13 +91,38 @@ int OnInit()
    if (SafetyStopDollars <= 0)
       Print("Owner's method: no losing stop. A trade that goes against you stays open until it recovers or the broker's margin stop-out closes it.");
 
+   gLastTickLocal = TimeLocal();
+   if (!IsTesting()) EventSetTimer(10);   // Keeps the status panel honest when no prices arrive
+   ShowStatus();
    return INIT_SUCCEEDED;
+}
+
+void OnDeinit(const int reason)
+{
+   EventKillTimer();
+   Comment("");
 }
 
 //+------------------------------------------------------------------+
 void OnTick()
 {
-   if (!SessionAllowsTrading()) return;
+   gLastTickLocal = TimeLocal();
+   RunStrategy();
+   ShowStatus();
+}
+
+void RunStrategy()
+{
+   if (!IsTradeAllowed())
+   {
+      SetStatus("Trading is OFF. Turn on the AutoTrading button and tick 'Allow live trading' in the EA settings.");
+      return;
+   }
+   if (!SessionAllowsTrading())
+   {
+      SetStatus("Done for today: session profit stop or loss limit reached.");
+      return;
+   }
 
    int buys  = CountPositions(OP_BUY);
    int sells = CountPositions(OP_SELL);
@@ -107,8 +134,48 @@ void OnTick()
    }
 
    int type = (buys > 0) ? OP_BUY : OP_SELL;
+   SetStatus("Managing " + IntegerToString(buys + sells) + " " + (type == OP_BUY ? "BUY" : "SELL") + " position(s).");
    ManageProfitStops(type);
    TryScaleIn(type, buys + sells);
+}
+
+// No ticks means the market is closed or the connection is down. Say so.
+void OnTimer()
+{
+   int quietSeconds = (int)(TimeLocal() - gLastTickLocal);
+   if (quietSeconds >= 120)
+   {
+      gStatus = "No price updates for " + IntegerToString(quietSeconds / 60) +
+                " min. Market closed (weekend/holiday) or no connection to the broker.";
+      ShowStatus();
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Status panel (top-left of the chart) and log                     |
+//+------------------------------------------------------------------+
+void SetStatus(string text)
+{
+   if (text != gStatus && !IsTesting()) Print("Status: ", text);
+   gStatus = text;
+}
+
+void ShowStatus()
+{
+   if (IsTesting() && !IsVisualMode()) return;
+
+   int    trend  = TrendDirection();
+   string trendText = (trend == OP_BUY) ? "UP (buy)" : (trend == OP_SELL) ? "DOWN (sell)" : "unclear (wait)";
+   double start  = GlobalVariableCheck(gKeyDayStart) ? GlobalVariableGet(gKeyDayStart) : AccountBalance();
+   double dayPct = (start > 0) ? (AccountEquity() / start - 1.0) * 100.0 : 0;
+
+   Comment("XAUUSD three-position EA  |  ", (SafetyStopDollars > 0 ? "risk-limited" : "owner's method"), "\n",
+           "AutoTrading: ", (IsTradeAllowed() ? "ON" : "OFF"), "\n",
+           "Trend (30 min & 2 h): ", trendText, "\n",
+           "Spread: $", DoubleToString(Ask - Bid, 2), "  (max $", DoubleToString(MaxSpreadDollars, 2), ")\n",
+           "Today: ", DoubleToString(dayPct, 2), "%  (goal +", DoubleToString(SessionGoalPercent, 0),
+           "%, stop +", DoubleToString(SessionProfitStopPercent, 0), "%)\n",
+           "Status: ", gStatus);
 }
 
 //+------------------------------------------------------------------+
@@ -175,16 +242,38 @@ int TrendDirection()
 //+------------------------------------------------------------------+
 void TryOpenPosition1()
 {
-   if (SessionGoalReached()) return;
+   if (SessionGoalReached())
+   {
+      SetStatus("Session goal reached: no new Position 1 today.");
+      return;
+   }
 
    long barId = (long)iTime(Symbol(), TrendTimeframe, 1);
-   if (barId == 0 || barId == gLastSignalId) return;   // At most one entry per closed bar
+   if (barId == 0)
+   {
+      SetStatus("Loading 5-minute price history. If this stays, open an M5 chart of this symbol once.");
+      return;
+   }
+   if (barId == gLastSignalId)
+   {
+      SetStatus("Already tried this bar. Waiting for the next 5-minute bar.");
+      return;   // At most one entry per closed bar
+   }
 
    int trend = TrendDirection();
-   if (trend == NONE) return;
-   if (!SpreadOk()) return;
+   if (trend == NONE)
+   {
+      SetStatus("No clear trend (30 min and 2 h disagree). Waiting.");
+      return;
+   }
+   if (!SpreadOk())
+   {
+      SetStatus("Trend found but spread $" + DoubleToString(Ask - Bid, 2) + " is above MaxSpreadDollars. Waiting.");
+      return;
+   }
 
-   OpenPosition(trend, 1);
+   if (OpenPosition(trend, 1))
+      SetStatus("Opened Position 1 " + (trend == OP_BUY ? "BUY" : "SELL") + ".");
    RememberSignal(barId);   // One attempt per bar, success or not
 }
 
@@ -218,6 +307,8 @@ bool OpenPosition(int type, int stage)
    {
       Print("Position ", stage, " skipped: not enough margin for ", DoubleToString(lots, 2),
             " lots at this leverage. The formula size was not reduced.");
+      SetStatus("Position " + IntegerToString(stage) + " skipped: not enough margin for " + DoubleToString(lots, 2) +
+                " lots. Leverage too low for the formula.");
       return false;
    }
 
@@ -237,6 +328,7 @@ bool OpenPosition(int type, int stage)
    if (sl == 0 || err != ERR_INVALID_STOPS)
    {
       Print(tag, " OrderSend failed. Error ", err);
+      SetStatus(tag + " rejected by the broker. Error " + IntegerToString(err) + ".");
       return false;
    }
 
@@ -306,11 +398,13 @@ double LotsForStage(int stage)
    if (lots > maxLot)
    {
       Print("Position ", stage, ": ", DoubleToString(lots, 2), " lots is above the broker maximum. Skipped.");
+      SetStatus("Position " + IntegerToString(stage) + " skipped: size above the broker maximum.");
       return 0;
    }
    if (lots < minLot)
    {
       Print("Position ", stage, ": ", DoubleToString(wanted, 4), " lots is below the broker minimum. Skipped.");
+      SetStatus("Position " + IntegerToString(stage) + " skipped: size below the broker minimum.");
       return 0;
    }
    return NormalizeDouble(lots, 2);

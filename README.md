@@ -85,6 +85,20 @@ That's why the alternative exists. The backtest should show which version surviv
    - **Out-of-sample check:** tune on 2023–2024 only, then run 2025 unchanged.
 5. If both fail, stop. Change the idea, not the code.
 
+## If the bot isn't trading
+
+The top-left corner of the chart shows a status panel with AutoTrading, trend, spread, today's result, and a **Status** line that says what the bot is waiting for. Common causes:
+
+| Status / symptom | Fix |
+|---|---|
+| No panel at all | The EA isn't running. Check the Experts tab for a load or compile error, and that the EA is attached to an XAUUSD chart. |
+| "Trading is OFF" | Turn on the **AutoTrading** button in the toolbar and tick **Allow live trading** in the EA's settings (Common tab). The face in the chart corner should smile. |
+| "No price updates…" | The market is closed (gold stops Friday night to Sunday night, plus holidays) or MT4 is disconnected (check the bottom-right corner). |
+| "No clear trend" | Normal. The bot only trades when 30 min and 2 h agree. |
+| "Spread … above MaxSpreadDollars" | The broker's spread is wider than $0.60. Wait, or raise `MaxSpreadDollars` a little. |
+| "not enough margin" | Leverage is too low for the formula (see the table above). |
+| "rejected by the broker. Error N" | Look up the error number in the Experts tab and send it to us. |
+
 ## Step 2: Demo account for at least 1 month
 
 Attach the EA to an XAUUSD chart on a **demo** account with the version that passed. Check that it trades the way the backtest did.
