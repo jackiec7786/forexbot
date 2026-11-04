@@ -35,6 +35,7 @@ input double           Lots3           = 0.10;  // Position 3 lots
 input string _s3 = "===== Scaling and profit stops =====";
 input double StepDollars   = 3.0;   // [TEST] "Several dollars": favourable move before the next position
 input double BufferDollars = 0.50;  // [TEST] "Slightly": stop distance past the latest position's open
+input bool   ExitOnTrendReversal = true;  // Close positions without a profit stop when the trend confirms the opposite way
 
 input string _s4 = "===== Session (owner targets) =====";
 input double SessionGoalPercent       = 10.0;  // At this gain: no new Position 1 (open trades keep running)
@@ -146,6 +147,11 @@ void RunStrategy()
 
    int type = (buys > 0) ? OP_BUY : OP_SELL;
    SetStatus("Managing " + IntegerToString(buys + sells) + " " + (type == OP_BUY ? "BUY" : "SELL") + " position(s).");
+
+   // Follow the trend both ways: if it confirms the opposite direction,
+   // close whatever is not yet protected by a profit stop.
+   int against = (type == OP_BUY) ? OP_SELL : OP_BUY;
+   if (ExitOnTrendReversal && TrendDirection() == against && CloseUnprotected(type)) return;
    ManageProfitStops(type);
    TryScaleIn(type, buys + sells);
 }
@@ -573,6 +579,37 @@ bool AllPositionsProtected(int type)
       if (type == OP_SELL && OrderStopLoss() >= OrderOpenPrice()) return false;
    }
    return true;
+}
+
+// Closes positions of this type whose stop is missing or not in profit.
+// Returns true if anything was closed.
+bool CloseUnprotected(int type)
+{
+   bool   closedAny = false;
+   double result    = 0;
+   for (int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES) || !IsOurs() || OrderType() != type) continue;
+      bool protectedStop = OrderStopLoss() != 0 &&
+                           ((type == OP_BUY  && OrderStopLoss() > OrderOpenPrice()) ||
+                            (type == OP_SELL && OrderStopLoss() < OrderOpenPrice()));
+      if (protectedStop) continue;
+
+      double pnl = OrderProfit() + OrderSwap() + OrderCommission();
+      RefreshRates();
+      double price = (type == OP_BUY) ? Bid : Ask;
+      if (OrderClose(OrderTicket(), OrderLots(), price, SlippagePoints, clrOrange))
+      {
+         closedAny = true;
+         result   += pnl;
+      }
+      else
+         Print("Trend-reversal close failed on ticket ", OrderTicket(), ". Error ", GetLastError());
+   }
+   if (closedAny)
+      SetStatus("Trend turned " + (type == OP_BUY ? "DOWN" : "UP") + ": closed unprotected position(s), result $" +
+                DoubleToString(result, 2) + ".");
+   return closedAny;
 }
 
 void CloseAll()

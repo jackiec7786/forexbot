@@ -28,6 +28,8 @@ An MT4 Expert Advisor for **P's XAU/USD three-position method**. The method belo
 
 **All three in.** All stops move $0.50 past Position 3's open, then every further $3 move lifts all stops by $3. That's the same `StepDollars` setting, so adding and stepping stay in sync. MT4 can't accept a profit stop on the newest position until price is past its entry, so $0.50 past is the earliest point.
 
+**Trend turns against you.** If the trend confirms the opposite direction (for a BUY, price below its level both 30 min and 2 h ago), the EA closes every position that doesn't yet have a profit stop. This can mean taking a loss. Positions already locked in profit keep their stops. Switch it off with `ExitOnTrendReversal = false`.
+
 **Rules that never change:**
 - stops only move in your favour and are always in profit
 - never add to a losing position
@@ -52,7 +54,6 @@ These are all inputs, so you can change them without editing code.
 ### Not built yet
 
 - **Newsday mode** (0.10 / 0.10 / 0.10, +50% target). Its rules are still undefined.
-- **An exit when a trade goes against you or the trend fails** (open item 6 in the handoff).
 
 ## The risk you need to see before testing
 
