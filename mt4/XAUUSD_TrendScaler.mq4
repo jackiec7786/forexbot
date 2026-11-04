@@ -157,6 +157,7 @@ void RunStrategy()
    }
 
    int type = (buys > 0) ? OP_BUY : OP_SELL;
+   if (SafetyStopDollars > 0 && ApplySafetyStops(type)) return;
    SetStatus("Managing " + IntegerToString(buys + sells) + " " + (type == OP_BUY ? "BUY" : "SELL") + " position(s).");
 
    // Follow the trend both ways: if it confirms the opposite direction,
@@ -591,6 +592,40 @@ bool AllPositionsProtected(int type)
       if (type == OP_SELL && OrderStopLoss() >= OrderOpenPrice()) return false;
    }
    return true;
+}
+
+// Failsafe: any position with no stop at all gets the safety stop.
+// Covers trades opened before the setting was switched on.
+// If price is already past that level, close the trade now.
+// Returns true if a position was closed.
+bool ApplySafetyStops(int type)
+{
+   bool closedAny = false;
+   RefreshRates();
+   double price   = (type == OP_BUY) ? Bid : Ask;
+   double minDist = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
+   for (int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES) || !IsOurs() || OrderType() != type) continue;
+      if (OrderStopLoss() != 0) continue;
+
+      double sl = NormalizeDouble((type == OP_BUY) ? OrderOpenPrice() - SafetyStopDollars
+                                                   : OrderOpenPrice() + SafetyStopDollars, Digits);
+      bool legal = (type == OP_BUY) ? price - sl >= minDist : sl - price >= minDist;
+      if (legal)
+      {
+         if (!OrderModify(OrderTicket(), OrderOpenPrice(), sl, 0, 0, clrGreen))
+            Print("Safety stop failed on ticket ", OrderTicket(), ". Error ", GetLastError());
+      }
+      else if (OrderClose(OrderTicket(), OrderLots(), price, SlippagePoints, clrOrange))
+      {
+         closedAny = true;
+         SetStatus("Safety stop level already passed: closed ticket " + IntegerToString(OrderTicket()) + ".");
+      }
+      else
+         Print("Safety close failed on ticket ", OrderTicket(), ". Error ", GetLastError());
+   }
+   return closedAny;
 }
 
 // Closes positions of this type whose stop is missing or not in profit.

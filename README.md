@@ -32,6 +32,8 @@ An MT4 Expert Advisor for **P's XAU/USD three-position method**. The method belo
 
 **A stop is hit while another position is unprotected.** For example, Position 1 closes at its profit stop while Position 2 has no profit stop yet. The move has failed, so the EA closes the leftover too, usually a small net loss. No position is ever left behind without a stop. Earlier stops also aren't pulled up when a new position opens, so a small dip doesn't knock out Position 1 early.
 
+**Failsafe (optional, off by default).** `SafetyStopDollars` puts a stop that far against you on every position, including ones already open, so a wrong trade closes at a known, small loss. `DailyLossLimitPercent` closes everything and stops for the day at that loss. Suggested: 10 and 3. This is a negative stop, so it changes P's "never negative" rule. Profit stops still take over once a trade is in profit.
+
 **Rules that never change:**
 - stops only move in your favour and are always in profit
 - never add to a losing position
