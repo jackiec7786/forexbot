@@ -3,7 +3,7 @@
 //|  P's XAU/USD three-position method.                              |
 //|                                                                  |
 //|  Default inputs = the owner's method:                            |
-//|    - Position sizes 0.04 / 0.08 / 0.10 lots per $100 balance     |
+//|    - Fixed position sizes 0.04 / 0.08 / 0.10 lots                |
 //|    - No losing stop. Stops are only ever placed in profit.       |
 //|  Optional alternative (for comparison in the Strategy Tester):   |
 //|    SizingMode = RISK_PERCENT and SafetyStopDollars > 0.          |
@@ -17,7 +17,7 @@
 
 enum ENUM_SIZING_MODE
 {
-   SIZING_FORMULA      = 0, // Formula: lots per $100 of balance (owner's method)
+   SIZING_FIXED        = 0, // Fixed lots: 0.04 / 0.08 / 0.10 (owner's method)
    SIZING_RISK_PERCENT = 1  // Risk %: size from SafetyStopDollars (alternative)
 };
 
@@ -27,10 +27,10 @@ input int             TrendShortMinutes = 30;   // [TEST] Price must be beyond i
 input int             TrendLongMinutes  = 120;  // [TEST] ...and beyond its level this many minutes ago
 
 input string           _s2 = "===== Position sizes =====";
-input ENUM_SIZING_MODE SizingMode      = SIZING_FORMULA;
-input double           Lots1Per100     = 0.04;  // Position 1 lots per $100 balance
-input double           Lots2Per100     = 0.08;  // Position 2 lots per $100 balance
-input double           Lots3Per100     = 0.10;  // Position 3 lots per $100 balance
+input ENUM_SIZING_MODE SizingMode      = SIZING_FIXED;
+input double           Lots1           = 0.04;  // Position 1 lots (always the smallest)
+input double           Lots2           = 0.08;  // Position 2 lots
+input double           Lots3           = 0.10;  // Position 3 lots
 
 input string _s3 = "===== Scaling and profit stops =====";
 input double StepDollars   = 3.0;   // [TEST] "Several dollars": favourable move before the next position
@@ -289,9 +289,9 @@ void TryOpenPosition1()
    RememberSignal(barId);   // One attempt per bar, success or not
 }
 
-// Gate: favourable move of StepDollars beyond the latest position,
-// every position in profit, and (from Position 3) every position
-// already protected by a profit stop.
+// Owner's sequence: favourable move of StepDollars beyond the latest
+// position and every position in profit -> protect the earlier
+// position(s) with a profit stop FIRST -> only then open the next one.
 void TryScaleIn(int type, int total)
 {
    if (total >= MAX_POSITIONS) return;
@@ -304,9 +304,39 @@ void TryScaleIn(int type, int total)
    if (moved < StepDollars) return;
    if (!SpreadOk()) return;
 
+   if (total == 1 && !AllPositionsProtected(type))
+   {
+      ProtectPosition1(type);
+      if (!AllPositionsProtected(type))
+      {
+         SetStatus("Position 1 is in profit but its stop was not accepted yet. Position 2 waits.");
+         return;
+      }
+   }
+
    gLastScaleAttempt = TimeCurrent();
    if (OpenPosition(type, total + 1))
       ManageProfitStops(type);   // Protect the earlier positions straight away
+}
+
+// Position 1's first stop: BufferDollars past its own entry, in profit.
+void ProtectPosition1(int type)
+{
+   RefreshRates();
+   double price   = (type == OP_BUY) ? Bid : Ask;
+   double minDist = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
+   for (int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES) || !IsOurs() || OrderType() != type) continue;
+      double target = NormalizeDouble((type == OP_BUY) ? OrderOpenPrice() + BufferDollars
+                                                       : OrderOpenPrice() - BufferDollars, Digits);
+      bool legal = (type == OP_BUY) ? price - target >= minDist : target - price >= minDist;
+      if (!legal) continue;
+      if (OrderModify(OrderTicket(), OrderOpenPrice(), target, 0, 0, clrGreen))
+         SetStatus("Position 1 protected at " + DoubleToString(target, Digits) + ". Opening Position 2.");
+      else
+         Print("Position 1 stop failed. Error ", GetLastError());
+   }
 }
 
 bool OpenPosition(int type, int stage)
@@ -373,9 +403,9 @@ bool OpenPosition(int type, int stage)
 //+------------------------------------------------------------------+
 double StageWeight(int stage)
 {
-   if (stage == 1) return Lots1Per100;
-   if (stage == 2) return Lots2Per100;
-   return Lots3Per100;
+   if (stage == 1) return Lots1;
+   if (stage == 2) return Lots2;
+   return Lots3;
 }
 
 double LotsForStage(int stage)
@@ -386,9 +416,9 @@ double LotsForStage(int stage)
    if (step <= 0) return 0;
 
    double wanted;
-   if (SizingMode == SIZING_FORMULA)
+   if (SizingMode == SIZING_FIXED)
    {
-      wanted = StageWeight(stage) * AccountBalance() / 100.0;
+      wanted = StageWeight(stage);
    }
    else
    {
@@ -397,7 +427,7 @@ double LotsForStage(int stage)
       double tickValue = MarketInfo(Symbol(), MODE_TICKVALUE);
       double tickSize  = MarketInfo(Symbol(), MODE_TICKSIZE);
       if (tickValue <= 0 || tickSize <= 0) return 0;
-      double share      = StageWeight(stage) / (Lots1Per100 + Lots2Per100 + Lots3Per100);
+      double share      = StageWeight(stage) / (Lots1 + Lots2 + Lots3);
       double riskMoney  = AccountBalance() * RiskPercentPerStack / 100.0 * share;
       double lossPerLot = SafetyStopDollars / tickSize * tickValue;
       wanted = riskMoney / lossPerLot;
