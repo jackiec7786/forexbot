@@ -30,6 +30,8 @@ An MT4 Expert Advisor for **P's XAU/USD three-position method**. The method belo
 
 **Trend turns against you.** If the trend confirms the opposite direction (for a BUY, price below its level both 30 min and 2 h ago), the EA closes every position that doesn't yet have a profit stop. This can mean taking a loss. Positions already locked in profit keep their stops. Switch it off with `ExitOnTrendReversal = false`.
 
+**A stop is hit while another position is unprotected.** For example, Position 1 closes at its profit stop while Position 2 has no profit stop yet. The move has failed, so the EA closes the leftover too, usually a small net loss. No position is ever left behind without a stop. Earlier stops also aren't pulled up when a new position opens, so a small dip doesn't knock out Position 1 early.
+
 **Rules that never change:**
 - stops only move in your favour and are always in profit
 - never add to a losing position

@@ -59,6 +59,7 @@ datetime gLastScaleAttempt = 0;
 datetime gLastTickLocal    = 0;
 string   gStatus           = "Starting up";
 string   gLastAttempt      = "none yet";
+int      gLastCount        = 0;
 string   gKeyDay, gKeyDayStart, gKeyLocked, gKeyLastId;
 
 //+------------------------------------------------------------------+
@@ -120,6 +121,7 @@ void OnTick()
 {
    gLastTickLocal = TimeLocal();
    RunStrategy();
+   gLastCount = CountPositions(NONE);
    ShowStatus();
 }
 
@@ -139,6 +141,15 @@ void RunStrategy()
    int buys  = CountPositions(OP_BUY);
    int sells = CountPositions(OP_SELL);
 
+   // A position just closed (its profit stop was hit) while another one
+   // still has no profit stop: the move failed, so close the leftover too.
+   if (buys + sells > 0 && buys + sells < gLastCount)
+   {
+      int left = (buys > 0) ? OP_BUY : OP_SELL;
+      if (!AllPositionsProtected(left) && CloseUnprotected(left, "A stop was hit and the rest had no profit stop"))
+         return;
+   }
+
    if (buys + sells == 0)
    {
       TryOpenPosition1();
@@ -151,7 +162,8 @@ void RunStrategy()
    // Follow the trend both ways: if it confirms the opposite direction,
    // close whatever is not yet protected by a profit stop.
    int against = (type == OP_BUY) ? OP_SELL : OP_BUY;
-   if (ExitOnTrendReversal && TrendDirection() == against && CloseUnprotected(type)) return;
+   if (ExitOnTrendReversal && TrendDirection() == against &&
+       CloseUnprotected(type, string("Trend turned ") + (type == OP_BUY ? "DOWN" : "UP"))) return;
    ManageProfitStops(type);
    TryScaleIn(type, buys + sells);
 }
@@ -322,7 +334,7 @@ void TryScaleIn(int type, int total)
 
    gLastScaleAttempt = TimeCurrent();
    if (OpenPosition(type, total + 1))
-      ManageProfitStops(type);   // Protect the earlier positions straight away
+      ManageProfitStops(type);   // Move stops at once if price already allows
 }
 
 // Position 1's first stop: BufferDollars past its own entry, in profit.
@@ -474,8 +486,8 @@ void RememberSignal(long id)
 //| Profit stops (owner's rule). Stop levels form a ladder:          |
 //|   latest position's open +/- BufferDollars, +/- whole StepDollars.|
 //| The EA always uses the highest rung MT4 accepts right now:       |
-//|  - The moment Position 2 (or 3) opens, the earlier positions get |
-//|    the rung one step back, which already locks their profit.     |
+//|  - Earlier stops are NOT pulled up when a new position opens, so |
+//|    a small dip can't knock out Position 1 and strand Position 2. |
 //|  - Once price is BufferDollars past the newest open, all stops   |
 //|    move there (Position 2's open + $0.50 for a BUY).             |
 //|  - With all three open, every further StepDollars move lifts all |
@@ -485,7 +497,7 @@ void RememberSignal(long id)
 void ManageProfitStops(int type)
 {
    int total = CountPositions(type);
-   if (total < 2) return;   // Position 1 alone: no stop under the owner's rule
+   if (total < 2) return;   // Position 1 alone: its first stop is set in ProtectPosition1
 
    RefreshRates();
    double price   = (type == OP_BUY) ? Bid : Ask;
@@ -493,10 +505,10 @@ void ManageProfitStops(int type)
    double front   = (type == OP_BUY) ? HighestOpen(OP_BUY) : LowestOpen(OP_SELL);
    double moved   = (type == OP_BUY) ? price - front : front - price;
 
-   // Highest rung that can legally be placed right now (-1 = one step back).
+   // Highest rung that can legally be placed right now.
    double steps = MathFloor((moved - BufferDollars - minDist) / StepDollars);
    if (total < MAX_POSITIONS && steps > 0) steps = 0;   // Stepping starts with all three in
-   if (steps < -1) return;
+   if (steps < 0) return;
    double offset = steps * StepDollars + BufferDollars;
    double target = NormalizeDouble((type == OP_BUY) ? front + offset : front - offset, Digits);
 
@@ -583,7 +595,7 @@ bool AllPositionsProtected(int type)
 
 // Closes positions of this type whose stop is missing or not in profit.
 // Returns true if anything was closed.
-bool CloseUnprotected(int type)
+bool CloseUnprotected(int type, string reason)
 {
    bool   closedAny = false;
    double result    = 0;
@@ -607,8 +619,7 @@ bool CloseUnprotected(int type)
          Print("Trend-reversal close failed on ticket ", OrderTicket(), ". Error ", GetLastError());
    }
    if (closedAny)
-      SetStatus("Trend turned " + (type == OP_BUY ? "DOWN" : "UP") + ": closed unprotected position(s), result $" +
-                DoubleToString(result, 2) + ".");
+      SetStatus(reason + ": closed unprotected position(s), result $" + DoubleToString(result, 2) + ".");
    return closedAny;
 }
 
