@@ -57,6 +57,7 @@ long     gLastSignalId     = 0;
 datetime gLastScaleAttempt = 0;
 datetime gLastTickLocal    = 0;
 string   gStatus           = "Starting up";
+string   gLastAttempt      = "none yet";
 string   gKeyDay, gKeyDayStart, gKeyLocked, gKeyLastId;
 
 //+------------------------------------------------------------------+
@@ -80,7 +81,17 @@ int OnInit()
       return INIT_PARAMETERS_INCORRECT;
    }
 
-   string prefix = "TS_" + IntegerToString(MagicNumber) + "_" + Symbol() + "_";
+   // Gold only: the dollar steps and buffers are sized for gold prices.
+   string sym = Symbol();
+   StringToUpper(sym);
+   if (StringFind(sym, "XAU") < 0 && StringFind(sym, "GOLD") < 0)
+   {
+      Alert("XAUUSD_TrendScaler only runs on a gold chart (XAUUSD). This chart is ", Symbol(), ".");
+      return INIT_FAILED;
+   }
+
+   // Per account, so switching accounts never reuses another account's day start.
+   string prefix = "TS_" + IntegerToString(AccountNumber()) + "_" + IntegerToString(MagicNumber) + "_" + Symbol() + "_";
    gKeyDay      = prefix + "day";
    gKeyDayStart = prefix + "daystart";
    gKeyLocked   = prefix + "locked";
@@ -256,7 +267,7 @@ void TryOpenPosition1()
    }
    if (barId == gLastSignalId)
    {
-      SetStatus("Already tried this bar. Waiting for the next 5-minute bar.");
+      SetStatus("Waiting for the next 5-minute bar. Last attempt: " + gLastAttempt);
       return;   // At most one entry per closed bar
    }
 
@@ -274,6 +285,7 @@ void TryOpenPosition1()
 
    if (OpenPosition(trend, 1))
       SetStatus("Opened Position 1 " + (trend == OP_BUY ? "BUY" : "SELL") + ".");
+   gLastAttempt = gStatus;   // Keep the result (or failure reason) on the panel
    RememberSignal(barId);   // One attempt per bar, success or not
 }
 
