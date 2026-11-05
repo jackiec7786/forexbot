@@ -2,7 +2,7 @@
 
 **Date:** November 5, 2026
 **Baseline:** *XAU/USD Three-Position Method Handoff*, Version 1.0 (October 18, 2026)
-**Applies to:** `mt4/XAUUSD_TrendScaler.mq4` (EA build of November 5, 2026)
+**Applies to:** the EA running on the VPS (the Nov 4 build with the leftover rule). The repo's newest build adds the optional slower exit and safety-stop changes, which are not installed.
 **Status:** Under demo test. **Not** proven profitable, **not** approved for live trading.
 
 This document lists every rule the EA uses and where each one came from, as the v1.0 handoff requires (section 15.1: "explicitly version any changes and identify whether each rule comes from the creator, the user, a test hypothesis, or standard risk practice").
@@ -66,10 +66,10 @@ This document lists every rule the EA uses and where each one came from, as the 
 | # | Rule | Source | EA input |
 |---|---|---|---|
 | 5.1 | Profit stops close positions in profit | P | none |
-| 5.2 | **Trend reversal:** if price is against an open position's direction compared with **2 h and 3 h** ago, close every position that has no profit stop yet (this can be a loss) | USER (Nov 4, "it has to follow the trend"); timing TEST | `ExitOnTrendReversal = true`, `ExitShortMinutes = 120`, `ExitLongMinutes = 180` |
+| 5.2 | **Trend reversal:** if the trend reading (30 min and 2 h, the same as entry) points against an open position, close every position that has no profit stop yet (this can be a loss) | USER (Nov 4, "it has to follow the trend") | `ExitOnTrendReversal = true` |
 | 5.3 | **Leftover:** if a position closes at its stop while another has no profit stop yet, close that one too | USER (Nov 4), answers v1.0 question 9 | none |
 
-**Why the exit is slower than the entry:** in v1 of rule 5.2 the exit used the same 30 min / 2 h reading as the entry. On a sideways Nov 4 it flip-flopped and produced 8 small losses in a row (−$176). The slower exit came in on Nov 5.
+**Known weakness, not installed fix:** because the exit uses the same reading as the entry, it flip-flops in sideways markets. On Nov 4 it produced 8 small losses in a row (−$176). A slower exit (2 h and 3 h, inputs `ExitShortMinutes` / `ExitLongMinutes`) is in the repo version of the EA. **The user chose not to install it** (Nov 5), so the VPS runs the 30 min / 2 h exit.
 
 ### Session
 
@@ -135,5 +135,5 @@ This is 1.5 days, mostly one strong uptrend and one sideways day. It isn't enoug
 | Nov 4 | Trend-reversal exit (rule 5.2) | USER |
 | Nov 4 | Leftover close (rule 5.3); earlier stops no longer pulled up (rule 4.8) | USER, SAFETY |
 | Nov 5 | Optional safety stop also covers open positions (off) | SAFETY alternative |
-| Nov 5 | Trend-reversal exit slowed to 2 h / 3 h | SAFETY, after demo whipsaw |
+| Nov 5 | Slower trend-reversal exit (2 h / 3 h) written; **not installed** by USER | SAFETY proposal |
 | Nov 5 | Kept P's no-negative-stop rule; failsafe stays off | USER |
