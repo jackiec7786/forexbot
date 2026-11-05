@@ -2,7 +2,7 @@
 
 **Date:** November 5, 2026
 **Baseline:** *XAU/USD Three-Position Method Handoff*, Version 1.0 (October 18, 2026)
-**Applies to:** the EA running on the VPS (the Nov 4 build with the leftover rule). The repo's newest build adds the optional slower exit and safety-stop changes, which are not installed.
+**Applies to:** the EA running on the VPS, a Nov 4 build. Whether it includes rule 5.3 (leftover close) is **unconfirmed**: a stranded 0.08 SELL on Nov 5 suggests it may not. The repo's newest build adds the optional slower exit and safety-stop changes, which are not installed.
 **Status:** Under demo test. **Not** proven profitable, **not** approved for live trading.
 
 This document lists every rule the EA uses and where each one came from, as the v1.0 handoff requires (section 15.1: "explicitly version any changes and identify whether each rule comes from the creator, the user, a test hypothesis, or standard risk practice").
