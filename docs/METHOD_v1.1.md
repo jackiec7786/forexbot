@@ -100,11 +100,23 @@ This document lists every rule the EA uses and where each one came from, as the 
 
 ## 3. Open questions for P
 
-1. Is **1:50** still the leverage to judge the method on, and does any result at 1:100 count?
-2. Is **$3** close to what P means by "several dollars"? Would P test $2 or $5?
-3. Is **$0.50** what P means by "slightly"? This number sets the size of most wins (Position 2 usually locks only $4).
-4. P's rules give no exit for a trade that goes against you before it's $3 in profit. Are rules 5.2 and 5.3 acceptable to P?
-5. At +10%, should the bot stop for the day, or keep going toward +25%?
+Sent to P on November 5, 2026. 1, 3 and 4 matter most.
+
+1. Before Position 1 is in profit, where should its stop be, or at what loss should we close it?
+2. Is $3 what P means by "several dollars"?
+3. Is $0.50 what P means by "slightly above Position 2's open", or should it be more?
+4. Once all three are in, how far behind price should the stops follow? ($0.50, $3, other?)
+5. If the trend turns against us before a profit stop exists, close the trade or hold it?
+6. If Position 1's stop is hit while Position 2 has no stop yet, close Position 2 too?
+7. How exactly is the trend confirmed? Is "price above its level 30 min and 2 h ago" right? Which chart timeframe?
+8. Sizes fixed (0.04 / 0.08 / 0.10), or growing with balance (0.04 per $100)?
+9. At +10%, stop for the day or continue to +25%? Measured on closed trades only, or including open trades?
+10. Is there a maximum loss per day?
+11. Is 1:50 still the test leverage?
+12. Newsday: which news, when to enter, and where do stops go?
+13. When does a session start and end: per day, or per login?
+
+**Evidence behind questions 3 and 4:** Position 2 opened 34 times but Position 3 only 3 times. All three Position 3s closed at their $0.50 stop within 6 to 31 seconds for +$5.00, so the full stack never held through a trend.
 
 ## 4. Demo results so far
 
