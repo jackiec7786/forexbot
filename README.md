@@ -4,6 +4,8 @@ An MT4 Expert Advisor for **P's XAU/USD three-position method**. The method belo
 
 **Nothing here is proven to make money.** Backtest first, then demo, before any real money.
 
+The full rules register (each rule, its source and when it changed) is in [`docs/METHOD_v1.1.md`](docs/METHOD_v1.1.md).
+
 ## What's here
 
 | Path | What it is |
