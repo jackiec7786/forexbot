@@ -53,11 +53,11 @@ This document lists every rule the EA uses and where each one came from, as the 
 | # | Rule | Source | EA input |
 |---|---|---|---|
 | 4.1 | Never add to a losing position. Add only after a favourable move with every open position in profit | P | none |
-| 4.2 | "Several dollars" / "comfortable position" = **$3** move in the trend direction beyond the latest entry | TEST | `StepDollars = 3.0` |
-| 4.3 | Position 1 reaches $3: **first** its stop goes to entry **+ $0.50** (− for SELL). **Only after MT4 accepts it** does Position 2 open | P (tutorial: "add my stop loss then add my 2nd position"), USER confirmed Nov 4 | `BufferDollars = 0.50` |
-| 4.4 | Once price allows, both stops move to **Position 2's open + $0.50** (− for SELL) | P (Oct 18 / Nov 4: "slightly above the break even of the position 2's open") | `BufferDollars` |
-| 4.5 | Position 3 opens only after Positions 1 and 2 both have accepted profit stops and price moves another $3 | P | `StepDollars` |
-| 4.6 | With all three open: stops go to Position 3's open + $0.50, then rise by $3 with every further $3 move | P ("add a stop loss for all three at the new profit line"), step size TEST | `StepDollars`, `BufferDollars` |
+| 4.2 | "Several dollars" / "comfortable position" = **$1.75** move in the trend direction beyond the latest entry | P (Nov 5; was TEST $3) | `StepDollars = 1.75` |
+| 4.3 | Position 1 reaches $1.75: **first** its stop goes to entry **+ $0.25** (− for SELL). **Only after MT4 accepts it** does Position 2 open | P (tutorial: "add my stop loss then add my 2nd position"), USER confirmed Nov 4; $0.25 from P Nov 5 | `BufferDollars = 0.25` |
+| 4.4 | Once price allows, both stops move to **Position 2's open + $0.25** (− for SELL) | P (Oct 18 / Nov 4: "slightly above the break even of the position 2's open") | `BufferDollars` |
+| 4.5 | Position 3 opens only after Positions 1 and 2 both have accepted profit stops and price moves another $1.75 | P | `StepDollars` |
+| 4.6 | With all three open: stops go to Position 3's open + $0.25, then rise by $1.75 with every further $1.75 move | P ("add a stop loss for all three at the new profit line"; numbers P Nov 5) | `StepDollars`, `BufferDollars` |
 | 4.7 | Stops are **never negative** and only ever tighten | P | none |
 | 4.8 | Earlier stops aren't pulled up when a new position opens (so a small dip can't knock out Position 1 and strand Position 2) | SAFETY, after the Nov 4 demo | none |
 
@@ -83,7 +83,7 @@ This document lists every rule the EA uses and where each one came from, as the 
 
 | # | Rule | Source | EA input |
 |---|---|---|---|
-| 7.1 | **No losing-side stop.** Position 1 has no stop until it's $3 in profit | P ("we never set a negative stop loss"), kept by USER Nov 5 | `SafetyStopDollars = 0` |
+| 7.1 | **No losing-side stop.** Position 1 has no stop until it's $1.75 in profit | P ("we never set a negative stop loss"), kept by USER Nov 5 | `SafetyStopDollars = 0` |
 | 7.2 | No daily loss limit | USER (kept P pure, Nov 5) | `DailyLossLimitPercent = 0` |
 | 7.3 | *Optional, off:* safety stop on every position (suggested $10) and daily loss limit (suggested 3%) | SAFETY alternative, **not approved** | same inputs |
 
@@ -103,9 +103,9 @@ This document lists every rule the EA uses and where each one came from, as the 
 Sent to P on November 5, 2026. 1, 3 and 4 matter most.
 
 1. Before Position 1 is in profit, where should its stop be, or at what loss should we close it?
-2. Is $3 what P means by "several dollars"?
-3. Is $0.50 what P means by "slightly above Position 2's open", or should it be more?
-4. Once all three are in, how far behind price should the stops follow? ($0.50, $3, other?)
+2. ~~Is $3 what P means by "several dollars"?~~ **Answered Nov 5: $1.75.**
+3. ~~Is $0.50 what P means by "slightly above Position 2's open"?~~ **Answered Nov 5: $0.25.**
+4. Once all three are in, how far behind price should the stops follow? (Now $0.25 past the newest open, stepping every $1.75. P's Nov 5 answer implies this; not yet confirmed directly.)
 5. If the trend turns against us before a profit stop exists, close the trade or hold it?
 6. If Position 1's stop is hit while Position 2 has no stop yet, close Position 2 too?
 7. How exactly is the trend confirmed? Is "price above its level 30 min and 2 h ago" right? Which chart timeframe?
@@ -149,4 +149,5 @@ This is 1.5 days, mostly one strong uptrend and one sideways day. It isn't enoug
 | Nov 5 | Optional safety stop also covers open positions (off) | SAFETY alternative |
 | Nov 5 | Slower trend-reversal exit (2 h / 3 h) written; **not installed** by USER | SAFETY proposal |
 | Nov 5 | Kept P's no-negative-stop rule; failsafe stays off | USER |
+| Nov 5 | **P's answer to questions 2 and 3:** step $3 → **$1.75**, buffer $0.50 → **$0.25** | P |
 | Nov 5 | Bug fix: rule 5.3 checked only once when a position closed, so a failed close left a 0.08 SELL stranded (−$98). Now checked every tick | SAFETY |

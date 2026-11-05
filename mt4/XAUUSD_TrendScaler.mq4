@@ -33,8 +33,8 @@ input double           Lots2           = 0.08;  // Position 2 lots
 input double           Lots3           = 0.10;  // Position 3 lots
 
 input string _s3 = "===== Scaling and profit stops =====";
-input double StepDollars   = 3.0;   // [TEST] "Several dollars": favourable move before the next position
-input double BufferDollars = 0.50;  // [TEST] "Slightly": stop distance past the latest position's open
+input double StepDollars   = 1.75;  // P (Nov 5): favourable move before the next position
+input double BufferDollars = 0.25;  // P (Nov 5): stop distance past the latest position's open
 input bool   ExitOnTrendReversal = true;  // Close positions without a profit stop when the trend confirms the opposite way
 input int    ExitShortMinutes    = 30;    // [TEST] Exit needs price against its level this many minutes ago...
 input int    ExitLongMinutes     = 120;   // [TEST] ...and this many. Same as entry; try 120/180 to reduce whipsaw

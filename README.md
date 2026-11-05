@@ -22,13 +22,13 @@ The full rules register (each rule, its source and when it changed) is in [`docs
 
 **Position 1.** Opens in the trend direction at **0.04 lots** (always the smallest). There is no stop loss yet.
 
-**Stop, then Position 2.** When price has moved $3 in your favour and Position 1 is in profit:
-1. Position 1's stop goes to $0.50 past its entry, locking a small profit.
+**Stop, then Position 2.** When price has moved $1.75 in your favour and Position 1 is in profit:
+1. Position 1's stop goes to $0.25 past its entry, locking a small profit.
 2. **Only once that stop is accepted** does Position 2 open, at **0.08 lots**.
 
-**Stops, then Position 3.** As soon as price is $0.50 past Position 2's open, both stops move there: above it for a BUY, below it for a SELL. Once both are protected and price has moved another $3, Position 3 opens at **0.10 lots**.
+**Stops, then Position 3.** As soon as price is $0.25 past Position 2's open, both stops move there: above it for a BUY, below it for a SELL. Once both are protected and price has moved another $1.75, Position 3 opens at **0.10 lots**.
 
-**All three in.** All stops move $0.50 past Position 3's open, then every further $3 move lifts all stops by $3. That's the same `StepDollars` setting, so adding and stepping stay in sync. MT4 can't accept a profit stop on the newest position until price is past its entry, so $0.50 past is the earliest point.
+**All three in.** All stops move $0.25 past Position 3's open, then every further $1.75 move lifts all stops by $1.75. That's the same `StepDollars` setting, so adding and stepping stay in sync. MT4 can't accept a profit stop on the newest position until price is past its entry, so $0.25 past is the earliest point.
 
 **Trend turns against you.** If the trend reading turns the other way (by default the same 30 min / 2 h reading as the entry), the EA closes every position that doesn't yet have a profit stop. In sideways markets this flip-flops (whipsaw). Setting `ExitShortMinutes = 120` and `ExitLongMinutes = 180` makes the exit slower, which is an option you can test. This can mean taking a loss. Positions already locked in profit keep their stops. Switch it off with `ExitOnTrendReversal = false`.
 
@@ -51,8 +51,8 @@ The full rules register (each rule, its source and when it changed) is in [`docs
 |---|---|---|
 | `TrendShortMinutes` / `TrendLongMinutes` | 30 / 120 (also test 180) | "observe 15–30 min, review 30 min to 2 h", "the prior two to three hours" |
 | `ExitShortMinutes` / `ExitLongMinutes` | 30 / 120 (same as entry; 120 / 180 is a slower option) | not in P's rules |
-| `StepDollars` | $3 | "several dollars" |
-| `BufferDollars` | $0.50 | "slightly above break-even of Position 2's open" |
+| `StepDollars` | $1.75 | P, Nov 5 (was $3) |
+| `BufferDollars` | $0.25 | P, Nov 5 (was $0.50) |
 | Sizes | fixed 0.04 / 0.08 / 0.10 lots | "my first position should always be my lowest amount, say 0.04" |
 | Session | resets each broker day; +10% only blocks new entries | the 10% vs 25% behaviour is undefined |
 
