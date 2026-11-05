@@ -36,8 +36,8 @@ input string _s3 = "===== Scaling and profit stops =====";
 input double StepDollars   = 3.0;   // [TEST] "Several dollars": favourable move before the next position
 input double BufferDollars = 0.50;  // [TEST] "Slightly": stop distance past the latest position's open
 input bool   ExitOnTrendReversal = true;  // Close positions without a profit stop when the trend confirms the opposite way
-input int    ExitShortMinutes    = 120;   // [TEST] Exit needs price against its level this many minutes ago...
-input int    ExitLongMinutes     = 180;   // [TEST] ...and this many. Slower than entry, to avoid whipsaw
+input int    ExitShortMinutes    = 30;    // [TEST] Exit needs price against its level this many minutes ago...
+input int    ExitLongMinutes     = 120;   // [TEST] ...and this many. Same as entry; try 120/180 to reduce whipsaw
 
 input string _s4 = "===== Session (owner targets) =====";
 input double SessionGoalPercent       = 10.0;  // At this gain: no new Position 1 (open trades keep running)
@@ -61,7 +61,6 @@ datetime gLastScaleAttempt = 0;
 datetime gLastTickLocal    = 0;
 string   gStatus           = "Starting up";
 string   gLastAttempt      = "none yet";
-int      gLastCount        = 0;
 string   gKeyDay, gKeyDayStart, gKeyLocked, gKeyLastId;
 
 //+------------------------------------------------------------------+
@@ -125,7 +124,6 @@ void OnTick()
 {
    gLastTickLocal = TimeLocal();
    RunStrategy();
-   gLastCount = CountPositions(NONE);
    ShowStatus();
 }
 
@@ -145,12 +143,15 @@ void RunStrategy()
    int buys  = CountPositions(OP_BUY);
    int sells = CountPositions(OP_SELL);
 
-   // A position just closed (its profit stop was hit) while another one
-   // still has no profit stop: the move failed, so close the leftover too.
-   if (buys + sells > 0 && buys + sells < gLastCount)
+   // Leftover check, every tick: Position 1 has closed (its stop was hit)
+   // but a later position still has no profit stop. The move failed, so
+   // close the leftover. Checked every tick, so a failed close or a restart
+   // can never leave one stranded.
+   if (buys + sells > 0)
    {
       int left = (buys > 0) ? OP_BUY : OP_SELL;
-      if (!AllPositionsProtected(left) && CloseUnprotected(left, "A stop was hit and the rest had no profit stop"))
+      if (!HasPosition1(left) && !AllPositionsProtected(left) &&
+          CloseUnprotected(left, "Position 1 closed and the rest had no profit stop"))
          return;
    }
 
@@ -594,6 +595,19 @@ bool AllPositionsInProfit()
       if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES) && IsOurs())
          if (OrderProfit() + OrderSwap() + OrderCommission() <= 0) return false;
    return true;
+}
+
+// True if this direction's Position 1 is still open: opened with comment
+// "Pos 1", or (if a broker ever drops comments) sized exactly like Position 1.
+bool HasPosition1(int type)
+{
+   for (int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES) || !IsOurs() || OrderType() != type) continue;
+      if (StringFind(OrderComment(), "Pos 1") == 0) return true;
+      if (SizingMode == SIZING_FIXED && MathAbs(OrderLots() - Lots1) < 0.0001) return true;
+   }
+   return false;
 }
 
 // Every position has a stop on the profit side of its open price.

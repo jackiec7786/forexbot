@@ -2,7 +2,7 @@
 
 **Date:** November 5, 2026
 **Baseline:** *XAU/USD Three-Position Method Handoff*, Version 1.0 (October 18, 2026)
-**Applies to:** the EA running on the VPS, a Nov 4 build. Whether it includes rule 5.3 (leftover close) is **unconfirmed**: a stranded 0.08 SELL on Nov 5 suggests it may not. The repo's newest build adds the optional slower exit and safety-stop changes, which are not installed.
+**Applies to:** `mt4/XAUUSD_TrendScaler.mq4`, build of November 5, 2026 (second build). Its defaults match the VPS's current behaviour except for the rule 5.3 fix below.
 **Status:** Under demo test. **Not** proven profitable, **not** approved for live trading.
 
 This document lists every rule the EA uses and where each one came from, as the v1.0 handoff requires (section 15.1: "explicitly version any changes and identify whether each rule comes from the creator, the user, a test hypothesis, or standard risk practice").
@@ -66,10 +66,10 @@ This document lists every rule the EA uses and where each one came from, as the 
 | # | Rule | Source | EA input |
 |---|---|---|---|
 | 5.1 | Profit stops close positions in profit | P | none |
-| 5.2 | **Trend reversal:** if the trend reading (30 min and 2 h, the same as entry) points against an open position, close every position that has no profit stop yet (this can be a loss) | USER (Nov 4, "it has to follow the trend") | `ExitOnTrendReversal = true` |
-| 5.3 | **Leftover:** if a position closes at its stop while another has no profit stop yet, close that one too | USER (Nov 4), answers v1.0 question 9 | none |
+| 5.2 | **Trend reversal:** if the trend reading (30 min and 2 h, the same as entry) points against an open position, close every position that has no profit stop yet (this can be a loss) | USER (Nov 4, "it has to follow the trend") | `ExitOnTrendReversal = true`, `ExitShortMinutes = 30`, `ExitLongMinutes = 120` |
+| 5.3 | **Leftover:** if Position 1 has closed at its stop while a later position has no profit stop yet, close that one too. Checked on every price tick | USER (Nov 4), answers v1.0 question 9 | none |
 
-**Known weakness, not installed fix:** because the exit uses the same reading as the entry, it flip-flops in sideways markets. On Nov 4 it produced 8 small losses in a row (−$176). A slower exit (2 h and 3 h, inputs `ExitShortMinutes` / `ExitLongMinutes`) is in the repo version of the EA. **The user chose not to install it** (Nov 5), so the VPS runs the 30 min / 2 h exit.
+**Known weakness, not installed fix:** because the exit uses the same reading as the entry, it flip-flops in sideways markets. On Nov 4 it produced 8 small losses in a row (−$176). A slower exit (set `ExitShortMinutes = 120`, `ExitLongMinutes = 180`) is available as an option. **The user chose not to use it** (Nov 5), so the default stays at 30 min / 2 h.
 
 ### Session
 
@@ -137,3 +137,4 @@ This is 1.5 days, mostly one strong uptrend and one sideways day. It isn't enoug
 | Nov 5 | Optional safety stop also covers open positions (off) | SAFETY alternative |
 | Nov 5 | Slower trend-reversal exit (2 h / 3 h) written; **not installed** by USER | SAFETY proposal |
 | Nov 5 | Kept P's no-negative-stop rule; failsafe stays off | USER |
+| Nov 5 | Bug fix: rule 5.3 checked only once when a position closed, so a failed close left a 0.08 SELL stranded (−$98). Now checked every tick | SAFETY |
