@@ -28,7 +28,7 @@ An MT4 Expert Advisor for **P's XAU/USD three-position method**. The method belo
 
 **All three in.** All stops move $0.50 past Position 3's open, then every further $3 move lifts all stops by $3. That's the same `StepDollars` setting, so adding and stepping stay in sync. MT4 can't accept a profit stop on the newest position until price is past its entry, so $0.50 past is the earliest point.
 
-**Trend turns against you.** If the trend confirms the opposite direction (for a BUY, price below its level both 30 min and 2 h ago), the EA closes every position that doesn't yet have a profit stop. This can mean taking a loss. Positions already locked in profit keep their stops. Switch it off with `ExitOnTrendReversal = false`.
+**Trend turns against you.** If the trend clearly turns the other way (for a BUY, price below its level both **2 h and 3 h** ago), the EA closes every position that doesn't yet have a profit stop. The exit is deliberately slower than the entry (30 min and 2 h), so a short dip in a sideways market doesn't cut trades at a loss over and over (whipsaw). Settings: `ExitShortMinutes` and `ExitLongMinutes`. This can mean taking a loss. Positions already locked in profit keep their stops. Switch it off with `ExitOnTrendReversal = false`.
 
 **A stop is hit while another position is unprotected.** For example, Position 1 closes at its profit stop while Position 2 has no profit stop yet. The move has failed, so the EA closes the leftover too, usually a small net loss. No position is ever left behind without a stop. Earlier stops also aren't pulled up when a new position opens, so a small dip doesn't knock out Position 1 early.
 
@@ -48,6 +48,7 @@ An MT4 Expert Advisor for **P's XAU/USD three-position method**. The method belo
 | Setting | Value | Owner's wording |
 |---|---|---|
 | `TrendShortMinutes` / `TrendLongMinutes` | 30 / 120 (also test 180) | "observe 15–30 min, review 30 min to 2 h", "the prior two to three hours" |
+| `ExitShortMinutes` / `ExitLongMinutes` | 120 / 180 | not in P's rules; slower than entry to stop whipsaw |
 | `StepDollars` | $3 | "several dollars" |
 | `BufferDollars` | $0.50 | "slightly above break-even of Position 2's open" |
 | Sizes | fixed 0.04 / 0.08 / 0.10 lots | "my first position should always be my lowest amount, say 0.04" |

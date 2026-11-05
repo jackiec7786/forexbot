@@ -36,6 +36,8 @@ input string _s3 = "===== Scaling and profit stops =====";
 input double StepDollars   = 3.0;   // [TEST] "Several dollars": favourable move before the next position
 input double BufferDollars = 0.50;  // [TEST] "Slightly": stop distance past the latest position's open
 input bool   ExitOnTrendReversal = true;  // Close positions without a profit stop when the trend confirms the opposite way
+input int    ExitShortMinutes    = 120;   // [TEST] Exit needs price against its level this many minutes ago...
+input int    ExitLongMinutes     = 180;   // [TEST] ...and this many. Slower than entry, to avoid whipsaw
 
 input string _s4 = "===== Session (owner targets) =====";
 input double SessionGoalPercent       = 10.0;  // At this gain: no new Position 1 (open trades keep running)
@@ -67,9 +69,11 @@ int OnInit()
 {
    int tfMinutes = PeriodSeconds(TrendTimeframe) / 60;
    if (tfMinutes <= 0 || TrendShortMinutes < tfMinutes || TrendLongMinutes <= TrendShortMinutes ||
-       TrendShortMinutes % tfMinutes != 0 || TrendLongMinutes % tfMinutes != 0)
+       TrendShortMinutes % tfMinutes != 0 || TrendLongMinutes % tfMinutes != 0 ||
+       ExitShortMinutes < tfMinutes || ExitLongMinutes <= ExitShortMinutes ||
+       ExitShortMinutes % tfMinutes != 0 || ExitLongMinutes % tfMinutes != 0)
    {
-      Print("Trend minutes must be multiples of the trend timeframe, with Long > Short.");
+      Print("Trend and exit minutes must be multiples of the trend timeframe, with Long > Short.");
       return INIT_PARAMETERS_INCORRECT;
    }
    if (StepDollars <= 0 || BufferDollars <= 0 || BufferDollars >= StepDollars)
@@ -163,7 +167,7 @@ void RunStrategy()
    // Follow the trend both ways: if it confirms the opposite direction,
    // close whatever is not yet protected by a profit stop.
    int against = (type == OP_BUY) ? OP_SELL : OP_BUY;
-   if (ExitOnTrendReversal && TrendDirection() == against &&
+   if (ExitOnTrendReversal && ExitTrendDirection() == against &&
        CloseUnprotected(type, string("Trend turned ") + (type == OP_BUY ? "DOWN" : "UP"))) return;
    ManageProfitStops(type);
    TryScaleIn(type, buys + sells);
@@ -256,10 +260,21 @@ bool SessionGoalReached()
 //+------------------------------------------------------------------+
 int TrendDirection()
 {
+   return TrendOver(TrendShortMinutes, TrendLongMinutes);
+}
+
+// Slower reading used only to exit, so short dips don't cause whipsaw.
+int ExitTrendDirection()
+{
+   return TrendOver(ExitShortMinutes, ExitLongMinutes);
+}
+
+int TrendOver(int shortMinutes, int longMinutes)
+{
    int tfMinutes = PeriodSeconds(TrendTimeframe) / 60;
    double now   = iClose(Symbol(), TrendTimeframe, 1);
-   double pastShort = iClose(Symbol(), TrendTimeframe, 1 + TrendShortMinutes / tfMinutes);
-   double pastLong  = iClose(Symbol(), TrendTimeframe, 1 + TrendLongMinutes / tfMinutes);
+   double pastShort = iClose(Symbol(), TrendTimeframe, 1 + shortMinutes / tfMinutes);
+   double pastLong  = iClose(Symbol(), TrendTimeframe, 1 + longMinutes / tfMinutes);
    if (now <= 0 || pastShort <= 0 || pastLong <= 0) return NONE;
 
    if (now > pastShort && now > pastLong) return OP_BUY;
