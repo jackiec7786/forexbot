@@ -4,6 +4,8 @@ An MT4 Expert Advisor for **P's XAU/USD three-position method**. The method belo
 
 **Nothing here is proven to make money.** Backtest first, then demo, before any real money.
 
+The full rules register (each rule, its source and when it changed) is in [`docs/METHOD_v1.1.md`](docs/METHOD_v1.1.md).
+
 ## What's here
 
 | Path | What it is |
@@ -18,16 +20,21 @@ An MT4 Expert Advisor for **P's XAU/USD three-position method**. The method belo
 - below both: SELL
 - anything else (sideways or mixed): WAIT
 
-**Position 1.** Opens in the trend direction at `0.04 × balance / $100` lots. There is no stop loss.
+**Position 1.** Opens in the trend direction at **0.04 lots** (always the smallest), with a **$10 stop against it** (`Position1StopDollars`, added Nov 6 by the user; set 0 for P's original no-stop rule). The profit stop below replaces it once Position 1 is $3 in profit.
 
-**Position 2.** Opens when price has moved $3 in your favour beyond Position 1 and Position 1 is in profit. The size is `0.08 × balance / $100`.
+**Stop, then Position 2.** When price has moved $3 in your favour and Position 1 is in profit:
+1. Position 1's stop goes to $0.50 past its entry, locking a small profit.
+2. **Only once that stop is accepted** does Position 2 open, at **0.08 lots**.
 
-**Profit stops.**
-- The moment Position 2 opens, Position 1's stop goes to about $0.50 above its own entry, so it's locked in profit at once.
-- As soon as price is $0.50 past Position 2's open, both stops move there: above it for a BUY, below it for a SELL. Position 1 then locks about $3.50 and Position 2 about $0.50.
-- MT4 can't accept a profit stop on the newest position until price is past its entry. $0.50 past is the earliest point.
+**Stops, then Position 3.** As soon as price is $0.50 past Position 2's open, both stops move there: above it for a BUY, below it for a SELL. Once both are protected and price has moved another $3, Position 3 opens at **0.10 lots**.
 
-**Position 3.** Opens only after both earlier positions have a profit stop and price has moved another $3. The size is `0.10 × balance / $100`. The same pattern repeats: earlier positions are protected the moment it opens, then all stops move $0.50 past Position 3's open. After that, every further $3 move lifts all stops by $3. That's the same `StepDollars` setting, so adding and stepping stay in sync.
+**All three in.** All stops move $0.50 past Position 3's open, then every further $3 move lifts all stops by $3. That's the same `StepDollars` setting, so adding and stepping stay in sync. MT4 can't accept a profit stop on the newest position until price is past its entry, so $0.50 past is the earliest point.
+
+**Trend turns against you.** If the trend reading turns the other way (by default the same 30 min / 2 h reading as the entry), the EA closes every position that doesn't yet have a profit stop. In sideways markets this flip-flops (whipsaw). Setting `ExitShortMinutes = 120` and `ExitLongMinutes = 180` makes the exit slower, which is an option you can test. This can mean taking a loss. Positions already locked in profit keep their stops. Switch it off with `ExitOnTrendReversal = false`.
+
+**A stop is hit while another position is unprotected.** For example, Position 1 closes at its profit stop while Position 2 has no profit stop yet. The move has failed, so the EA closes the leftover too, usually a small net loss. This is checked on every price tick, so a failed close or a restart can't leave a position stranded. No position is ever left behind without a stop. Earlier stops also aren't pulled up when a new position opens, so a small dip doesn't knock out Position 1 early.
+
+**General failsafe (optional, off by default).** `SafetyStopDollars` puts a stop that far against you on every position, including ones already open, so a wrong trade closes at a known, small loss. `DailyLossLimitPercent` closes everything and stops for the day at that loss. Suggested: 10 and 3. This is a negative stop, so it changes P's "never negative" rule. Profit stops still take over once a trade is in profit.
 
 **Rules that never change:**
 - stops only move in your favour and are always in profit
@@ -43,9 +50,10 @@ An MT4 Expert Advisor for **P's XAU/USD three-position method**. The method belo
 | Setting | Value | Owner's wording |
 |---|---|---|
 | `TrendShortMinutes` / `TrendLongMinutes` | 30 / 120 (also test 180) | "observe 15–30 min, review 30 min to 2 h", "the prior two to three hours" |
-| `StepDollars` | $3 | "several dollars" |
-| `BufferDollars` | $0.50 | "slightly above break-even of Position 2's open" |
-| Sizes 2 and 3 | grow with balance, same as Position 1 | scaling formula unconfirmed |
+| `ExitShortMinutes` / `ExitLongMinutes` | 30 / 120 (same as entry; 120 / 180 is a slower option) | not in P's rules |
+| `StepDollars` | $3 | "several dollars"; P's $1.75 (Nov 5) tested and reverted Nov 6 |
+| `BufferDollars` | $0.50 | "slightly"; P's $0.25 (Nov 5) tested and reverted Nov 6 |
+| Sizes | fixed 0.04 / 0.08 / 0.10 lots | "my first position should always be my lowest amount, say 0.04" |
 | Session | resets each broker day; +10% only blocks new entries | the 10% vs 25% behaviour is undefined |
 
 These are all inputs, so you can change them without editing code.
@@ -53,21 +61,25 @@ These are all inputs, so you can change them without editing code.
 ### Not built yet
 
 - **Newsday mode** (0.10 / 0.10 / 0.10, +50% target). Its rules are still undefined.
-- **An exit when a trade goes against you or the trend fails** (open item 6 in the handoff).
 
 ## The risk you need to see before testing
 
-The numbers below use the handoff's own example: gold at $4,000, 100 oz per lot, and a broker that closes positions when margin level falls to 50%. Check your broker's real values.
+The numbers below assume gold at $4,000, 100 oz per lot, and a broker that closes positions when margin level falls to 50%. Check your broker's real values.
 
-| Leverage | Margin for Position 1 | Margin for all three | Can the formula run? |
+| Leverage | Margin for Position 1 (0.04) | Margin for all three (0.22) | Balance to hold all three at 200% margin level |
 |---|---|---|---|
-| 1:50 | 3.2 × balance | 17.6 × balance | **No.** Position 1 is rejected at any balance. |
-| 1:500 | 0.32 × balance | 1.76 × balance | Positions 1 and 2 only. Position 3 is skipped. |
-| 1:1000 | 0.16 × balance | 0.88 × balance | Yes, but margin level is very thin. |
+| 1:50 | $320 | $1,760 | about $3,500 |
+| 1:100 | $160 | $880 | about $1,760 |
+| 1:500 | $32 | $176 | about $350 |
 
-The EA never shrinks the formula to make it fit. It skips the position and logs why.
+If margin is short, the EA skips the position and logs why. It never shrinks the sizes to make them fit.
 
-**With no losing stop, Position 1 alone loses about 4% of the balance per $1 gold moves against it.** At 1:500 or 1:1000, the broker's stop-out comes after roughly a **$21–23 move against you**, which wipes most of the account. Gold can move that much in a single day.
+**Position 1 has no losing stop.** At 0.04 lots, every $1 gold moves against it costs $4. At 1:50, the broker's stop-out comes after roughly:
+- a **$85 move** against you on a $500 account
+- **$210** on $1,000
+- **$1,210** on $5,000
+
+Gold can move $50 or more in a day.
 
 That's why the alternative exists. The backtest should show which version survives.
 
@@ -77,13 +89,27 @@ That's why the alternative exists. The backtest should show which version surviv
 2. Strategy Tester: XAUUSD, model **Every tick**, **at least 2 years**, the same dates for both runs.
    - **Run A (owner's method):** default inputs.
    - **Run B (risk-limited):** `SizingMode = RISK_PERCENT`, `SafetyStopDollars = 10`, `RiskPercentPerStack = 1`, `DailyLossLimitPercent = 3`.
-3. Set the tester's deposit and leverage to what you'd really use. At 1:50, Run A will skip every trade (see the table above).
+3. Set the tester's deposit and leverage to what you'd really use (1:50 is P's tutorial setting; see the table above for the balance it needs).
 4. Compare:
    - **Number of trades:** 100 or more before the result means anything.
    - **Profit factor:** below 1.2 means no real edge after costs.
    - **Max drawdown,** and whether the account ever hit a margin stop-out.
    - **Out-of-sample check:** tune on 2023–2024 only, then run 2025 unchanged.
 5. If both fail, stop. Change the idea, not the code.
+
+## If the bot isn't trading
+
+The top-left corner of the chart shows a status panel with AutoTrading, trend, spread, today's result, and a **Status** line that says what the bot is waiting for. Common causes:
+
+| Status / symptom | Fix |
+|---|---|
+| No panel at all | The EA isn't running. Check the Experts tab for a load or compile error, and that the EA is attached to an XAUUSD chart. |
+| "Trading is OFF" | Turn on the **AutoTrading** button in the toolbar and tick **Allow live trading** in the EA's settings (Common tab). The face in the chart corner should smile. |
+| "No price updates…" | The market is closed (gold stops Friday night to Sunday night, plus holidays) or MT4 is disconnected (check the bottom-right corner). |
+| "No clear trend" | Normal. The bot only trades when 30 min and 2 h agree. |
+| "Spread … above MaxSpreadDollars" | The broker's spread is wider than $0.60. Wait, or raise `MaxSpreadDollars` a little. |
+| "not enough margin" | Leverage is too low for the formula (see the table above). |
+| "rejected by the broker. Error N" | Look up the error number in the Experts tab and send it to us. |
 
 ## Step 2: Demo account for at least 1 month
 
