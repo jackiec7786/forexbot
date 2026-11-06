@@ -83,11 +83,11 @@ This document lists every rule the EA uses and where each one came from, as the 
 
 | # | Rule | Source | EA input |
 |---|---|---|---|
-| 7.1 | **No losing-side stop.** Position 1 has no stop until it's $1.75 in profit | P ("we never set a negative stop loss"), kept by USER Nov 5 | `SafetyStopDollars = 0` |
+| 7.1 | **Position 1 stop:** Position 1 opens with a stop **$10 against it**, replaced by P's profit stop once it's $1.75 in profit. Positions 2 and 3 have no losing-side stop (they open only after earlier positions are protected) | **USER (Nov 6)**, **changes** P's "we never set a negative stop loss". Reason: Position 1 before its first stop caused −$867 of −$1,271 total losses (Nov 4–6). P to be told | `Position1StopDollars = 10` (0 = P's original) |
 | 7.2 | No daily loss limit | USER (kept P pure, Nov 5) | `DailyLossLimitPercent = 0` |
 | 7.3 | *Optional, off:* safety stop on every position (suggested $10) and daily loss limit (suggested 3%) | SAFETY alternative, **not approved** | same inputs |
 
-**Known exposure under 7.1:** at 0.04 lots, every $1 that gold moves against Position 1 costs $4. Only rules 5.2 and 5.3, or the broker's margin stop-out, end a losing trade.
+**Exposure under 7.1:** Position 1 can lose about $40 at most (0.04 lots × $10), more if price jumps past the stop. With `Position1StopDollars = 0` (P's original), only rules 5.2 and 5.3, or the broker's margin stop-out, end a losing trade.
 
 ---
 
@@ -149,5 +149,6 @@ This is 1.5 days, mostly one strong uptrend and one sideways day. It isn't enoug
 | Nov 5 | Optional safety stop also covers open positions (off) | SAFETY alternative |
 | Nov 5 | Slower trend-reversal exit (2 h / 3 h) written; **not installed** by USER | SAFETY proposal |
 | Nov 5 | Kept P's no-negative-stop rule; failsafe stays off | USER |
+| Nov 6 | **Position 1 stop, $10** (rule 7.1), after analysis of 131 trades showed Position 1 before its first stop as the main loss source | USER (changes P's rule; P to be told) |
 | Nov 5 | **P's answer to questions 2 and 3:** step $3 → **$1.75**, buffer $0.50 → **$0.25** | P |
 | Nov 5 | Bug fix: rule 5.3 checked only once when a position closed, so a failed close left a 0.08 SELL stranded (−$98). Now checked every tick | SAFETY |

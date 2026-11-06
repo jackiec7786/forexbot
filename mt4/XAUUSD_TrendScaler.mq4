@@ -43,7 +43,8 @@ input string _s4 = "===== Session (owner targets) =====";
 input double SessionGoalPercent       = 10.0;  // At this gain: no new Position 1 (open trades keep running)
 input double SessionProfitStopPercent = 25.0;  // At this gain: close everything, done for the day
 
-input string _s5 = "===== Alternative: risk limits (0 = off) =====";
+input string _s5 = "===== Loss-side stops (0 = off) =====";
+input double Position1StopDollars  = 10.0; // USER (Nov 6): stop on Position 1 only, until its profit stop. 0 = P's original (none)
 input double SafetyStopDollars     = 0.0;  // Losing stop on every position. 0 = owner's method (none)
 input double RiskPercentPerStack   = 1.0;  // Used only with SIZING_RISK_PERCENT
 input double DailyLossLimitPercent = 0.0;  // Close everything at this loss. 0 = off
@@ -104,7 +105,7 @@ int OnInit()
    if (!IsTesting() && GlobalVariableCheck(gKeyLastId))
       gLastSignalId = (long)GlobalVariableGet(gKeyLastId);
 
-   if (SafetyStopDollars <= 0)
+   if (SafetyStopDollars <= 0 && Position1StopDollars <= 0)
       Print("Owner's method: no losing stop. A trade that goes against you stays open until it recovers or the broker's margin stop-out closes it.");
 
    gLastTickLocal = TimeLocal();
@@ -162,7 +163,7 @@ void RunStrategy()
    }
 
    int type = (buys > 0) ? OP_BUY : OP_SELL;
-   if (SafetyStopDollars > 0 && ApplySafetyStops(type)) return;
+   if ((SafetyStopDollars > 0 || Position1StopDollars > 0) && ApplySafetyStops(type)) return;
    SetStatus("Managing " + IntegerToString(buys + sells) + " " + (type == OP_BUY ? "BUY" : "SELL") + " position(s).");
 
    // Follow the trend both ways: if it confirms the opposite direction,
@@ -204,7 +205,10 @@ void ShowStatus()
    double start  = GlobalVariableCheck(gKeyDayStart) ? GlobalVariableGet(gKeyDayStart) : AccountBalance();
    double dayPct = (start > 0) ? (AccountEquity() / start - 1.0) * 100.0 : 0;
 
-   Comment("XAUUSD three-position EA  |  ", (SafetyStopDollars > 0 ? "risk-limited" : "owner's method"), "\n",
+   string mode = (SafetyStopDollars > 0) ? "risk-limited"
+               : (Position1StopDollars > 0) ? "owner's method + $" + DoubleToString(Position1StopDollars, 2) + " Position 1 stop"
+               : "owner's method";
+   Comment("XAUUSD three-position EA  |  ", mode, "\n",
            "AutoTrading: ", (IsTradeAllowed() ? "ON" : "OFF"), "\n",
            "Trend (30 min & 2 h): ", trendText, "\n",
            "Spread: $", DoubleToString(Ask - Bid, 2), "  (max $", DoubleToString(MaxSpreadDollars, 2), ")\n",
@@ -392,8 +396,9 @@ bool OpenPosition(int type, int stage)
    RefreshRates();
    double price = (type == OP_BUY) ? Ask : Bid;
    double sl    = 0;
-   if (SafetyStopDollars > 0)
-      sl = NormalizeDouble((type == OP_BUY) ? price - SafetyStopDollars : price + SafetyStopDollars, Digits);
+   double lossStop = LossStopFor(stage);
+   if (lossStop > 0)
+      sl = NormalizeDouble((type == OP_BUY) ? price - lossStop : price + lossStop, Digits);
 
    string tag = "Pos " + IntegerToString(stage);
    color  clr = (type == OP_BUY) ? clrBlue : clrRed;
@@ -422,8 +427,8 @@ bool OpenPosition(int type, int stage)
    }
    if (!OrderSelect(ticket, SELECT_BY_TICKET)) return false;
 
-   sl = NormalizeDouble((type == OP_BUY) ? OrderOpenPrice() - SafetyStopDollars
-                                         : OrderOpenPrice() + SafetyStopDollars, Digits);
+   sl = NormalizeDouble((type == OP_BUY) ? OrderOpenPrice() - lossStop
+                                         : OrderOpenPrice() + lossStop, Digits);
    if (OrderModify(ticket, OrderOpenPrice(), sl, 0, 0, clrGreen)) return true;
 
    Print("Could not attach safety stop (error ", GetLastError(), "). Closing ", tag, ".");
@@ -623,7 +628,24 @@ bool AllPositionsProtected(int type)
    return true;
 }
 
-// Failsafe: any position with no stop at all gets the safety stop.
+// Loss-side stop distance for a stage: the general safety stop if on,
+// otherwise the Position 1 stop for Position 1. 0 = none.
+double LossStopFor(int stage)
+{
+   if (SafetyStopDollars > 0) return SafetyStopDollars;
+   if (stage == 1 && Position1StopDollars > 0) return Position1StopDollars;
+   return 0;
+}
+
+// True if the currently selected order is a Position 1.
+bool SelectedIsPosition1()
+{
+   if (StringFind(OrderComment(), "Pos 1") == 0) return true;
+   return SizingMode == SIZING_FIXED && MathAbs(OrderLots() - Lots1) < 0.0001;
+}
+
+// Failsafe: any position with no stop at all gets its loss-side stop
+// (Position 1 stop, or the general safety stop).
 // Covers trades opened before the setting was switched on.
 // If price is already past that level, close the trade now.
 // Returns true if a position was closed.
@@ -637,9 +659,11 @@ bool ApplySafetyStops(int type)
    {
       if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES) || !IsOurs() || OrderType() != type) continue;
       if (OrderStopLoss() != 0) continue;
+      double dist = LossStopFor(SelectedIsPosition1() ? 1 : 2);
+      if (dist <= 0) continue;
 
-      double sl = NormalizeDouble((type == OP_BUY) ? OrderOpenPrice() - SafetyStopDollars
-                                                   : OrderOpenPrice() + SafetyStopDollars, Digits);
+      double sl = NormalizeDouble((type == OP_BUY) ? OrderOpenPrice() - dist
+                                                   : OrderOpenPrice() + dist, Digits);
       bool legal = (type == OP_BUY) ? price - sl >= minDist : sl - price >= minDist;
       if (legal)
       {

@@ -20,7 +20,7 @@ The full rules register (each rule, its source and when it changed) is in [`docs
 - below both: SELL
 - anything else (sideways or mixed): WAIT
 
-**Position 1.** Opens in the trend direction at **0.04 lots** (always the smallest). There is no stop loss yet.
+**Position 1.** Opens in the trend direction at **0.04 lots** (always the smallest), with a **$10 stop against it** (`Position1StopDollars`, added Nov 6 by the user; set 0 for P's original no-stop rule). The profit stop below replaces it.
 
 **Stop, then Position 2.** When price has moved $1.75 in your favour and Position 1 is in profit:
 1. Position 1's stop goes to $0.25 past its entry, locking a small profit.
@@ -34,7 +34,7 @@ The full rules register (each rule, its source and when it changed) is in [`docs
 
 **A stop is hit while another position is unprotected.** For example, Position 1 closes at its profit stop while Position 2 has no profit stop yet. The move has failed, so the EA closes the leftover too, usually a small net loss. This is checked on every price tick, so a failed close or a restart can't leave a position stranded. No position is ever left behind without a stop. Earlier stops also aren't pulled up when a new position opens, so a small dip doesn't knock out Position 1 early.
 
-**Failsafe (optional, off by default).** `SafetyStopDollars` puts a stop that far against you on every position, including ones already open, so a wrong trade closes at a known, small loss. `DailyLossLimitPercent` closes everything and stops for the day at that loss. Suggested: 10 and 3. This is a negative stop, so it changes P's "never negative" rule. Profit stops still take over once a trade is in profit.
+**General failsafe (optional, off by default).** `SafetyStopDollars` puts a stop that far against you on every position, including ones already open, so a wrong trade closes at a known, small loss. `DailyLossLimitPercent` closes everything and stops for the day at that loss. Suggested: 10 and 3. This is a negative stop, so it changes P's "never negative" rule. Profit stops still take over once a trade is in profit.
 
 **Rules that never change:**
 - stops only move in your favour and are always in profit
