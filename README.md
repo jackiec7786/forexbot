@@ -10,10 +10,27 @@ The full rules register (each rule, its source and when it changed) is in [`docs
 
 | Path | What it is |
 |---|---|
-| `mt4/XAUUSD_TrendScaler.mq4` | The EA. Everything the method needs runs inside MT4. |
+| `mt4/P_ThreePosition.mq4` | **P's method rebuilt from the original handoff only** (Nov 10). No added exit rules. See below. |
+| `mt4/XAUUSD_TrendScaler.mq4` | The earlier EA with the added rules (trend exit, leftover close, Position 1 stop). Kept for comparison. |
 | `server/`, `tradingview/`, `deploy/` | **Parked.** An earlier TradingView signal server with a news filter. The current EA doesn't use it. |
 
-## The method, as coded
+## P_ThreePosition: P's original method (Nov 10 rebuild)
+
+Built from the Oct 18 handoff only, with the numbers the user chose: $3 steps, $0.50 stop buffer, and $0.30 trailing every $0.90 once all three are in. BUY example (SELL is the mirror image):
+
+1. Trend up (price above its level 30 min and 2 h ago): open **Position 1, 0.04 lots, no stop**.
+2. Position 1 **+$3**: its stop goes to entry + $0.50. Once MT4 accepts it, open **Position 2, 0.08**.
+3. Position 2 **+$3**: both stops go to Position 2's entry + $0.50. Once accepted, open **Position 3, 0.10**.
+4. Position 3 **+$3**: all stops go to Position 3's entry + $0.50, then **+$0.30 for every further $0.90**.
+5. **+25%** of the day's starting balance: close everything, done for the day.
+
+Stops are never negative and never move backward. It never adds to a losing position and never opens a fourth.
+
+**Deliberately left out, because P's rules don't define them:** a stop before a position is in profit, an exit when the trend turns, closing a leftover position, and a daily loss limit. **A losing position is held** until it recovers or the broker's margin stop-out closes it. On the Nov 4–6 demo, trades in that state caused most of the losses.
+
+It uses magic number **444444**, so it never touches trades from `XAUUSD_TrendScaler` (333333).
+
+## The method, as coded (XAUUSD_TrendScaler)
 
 **Trend.** The EA checks closed 5-minute bars:
 - price above its level 30 minutes ago **and** above its level 2 hours ago: BUY
