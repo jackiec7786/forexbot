@@ -16,12 +16,17 @@
 //|  Stops are never negative and never move backward. Never add to  |
 //|  a losing position. No fourth position.                          |
 //|                                                                  |
-//|  Not in P's rules, so NOT in this EA: a stop before a position   |
-//|  is in profit, an exit when the trend turns, closing a leftover  |
-//|  position, a daily loss limit. A losing position is held.        |
+//|  Protections added by the user (Nov 10), each with an off switch: |
+//|   - Position1StopDollars: Position 1 opens with a stop $10       |
+//|     against it until its profit stop replaces it (0 = off)      |
+//|   - CloseLeftover: if Position 1 is gone and a later position    |
+//|     has no profit stop, close it (false = off)                   |
+//|   - DailyLossLimitPercent: at -3% for the day, close all and     |
+//|     stop until tomorrow (0 = off)                                |
+//|  With all three off, this is P's method exactly as written.      |
 //+------------------------------------------------------------------+
 #property strict
-#property description "P's three-position method from the original handoff. No losing-side stops: a losing position is held."
+#property description "P's three-position method from the original handoff, plus three switchable protections (Position 1 stop, leftover close, daily loss limit)."
 
 input string          _s1 = "===== Trend (line graph) =====";
 input ENUM_TIMEFRAMES TrendTimeframe    = PERIOD_M5;
@@ -41,6 +46,11 @@ input double TrailBy       = 0.30;  // ...raise all stops by this much
 
 input string _s4 = "===== Session =====";
 input double SessionProfitStopPercent = 25.0;  // Close everything and stop for the day at this gain
+
+input string _s4b = "===== Protections (user, Nov 10) =====";
+input double Position1StopDollars  = 10.0;  // Stop on Position 1 until its profit stop. 0 = off (P's original)
+input bool   CloseLeftover         = true;  // Position 1 gone + a later position without profit stop: close it
+input double DailyLossLimitPercent = 3.0;   // Close all and stop for the day at this loss. 0 = off
 
 input string _s5 = "===== General =====";
 input double MaxSpreadDollars = 0.60;
@@ -113,7 +123,7 @@ void OnTick()
 void Run()
 {
    if (!IsTradeAllowed()) { gStatus = "Trading is OFF. Turn on AutoTrading and 'Allow live trading'."; return; }
-   if (!SessionOpen())    { gStatus = "Done for today: +" + DoubleToString(SessionProfitStopPercent, 0) + "% session stop reached."; return; }
+   if (!SessionOpen())    { gStatus = "Done for today: session profit stop or daily loss limit reached."; return; }
 
    int type  = OpenDirection();
    int stage = HighestStage(type);
@@ -125,6 +135,8 @@ void Run()
    }
 
    gStatus = "Managing " + (type == OP_BUY ? "BUY" : "SELL") + " stack, highest position " + IntegerToString(stage) + ".";
+   if (Position1StopDollars > 0 && ApplyPosition1Stop(type)) return;
+   if (CloseLeftover && !HasStage(type, 1) && CloseUnprotected(type)) return;
    AdvanceStage(type, stage);
 }
 
@@ -146,6 +158,14 @@ bool SessionOpen()
        AccountEquity() >= GlobalVariableGet(gKeyStart) * (1.0 + SessionProfitStopPercent / 100.0))
    {
       Print("Session profit stop reached. Closing all positions for today.");
+      CloseAll();
+      GlobalVariableSet(gKeyLocked, 1);
+      return false;
+   }
+   if (DailyLossLimitPercent > 0 &&
+       AccountEquity() <= GlobalVariableGet(gKeyStart) * (1.0 - DailyLossLimitPercent / 100.0))
+   {
+      Print("Daily loss limit reached. Closing all positions for today.");
       CloseAll();
       GlobalVariableSet(gKeyLocked, 1);
       return false;
@@ -260,16 +280,96 @@ bool Open(int type, int stage)
    RefreshRates();
    double price = (type == OP_BUY) ? Ask : Bid;
    string tag   = "Pos " + IntegerToString(stage);
-   int ticket = OrderSend(Symbol(), type, lots, price, SlippagePoints, 0, 0, tag, MagicNumber, 0,
-                          type == OP_BUY ? clrBlue : clrRed);
-   if (ticket < 0)
+   color  clr   = (type == OP_BUY) ? clrBlue : clrRed;
+   double sl    = 0;
+   if (stage == 1 && Position1StopDollars > 0)
+      sl = NormalizeDouble((type == OP_BUY) ? price - Position1StopDollars : price + Position1StopDollars, Digits);
+
+   int ticket = OrderSend(Symbol(), type, lots, price, SlippagePoints, sl, 0, tag, MagicNumber, 0, clr);
+   if (ticket >= 0) return true;
+
+   int err = GetLastError();
+   if (sl == 0 || err != ERR_INVALID_STOPS)
    {
-      int err = GetLastError();
       gStatus = tag + " rejected by the broker. Error " + IntegerToString(err) + ".";
       Print(gStatus);
       return false;
    }
+   // Some accounts refuse a stop on a market order: open, then attach it.
+   // ApplyPosition1Stop() attaches it on the next tick, or closes the trade.
+   RefreshRates();
+   price  = (type == OP_BUY) ? Ask : Bid;
+   ticket = OrderSend(Symbol(), type, lots, price, SlippagePoints, 0, 0, tag, MagicNumber, 0, clr);
+   if (ticket < 0)
+   {
+      gStatus = tag + " rejected by the broker. Error " + IntegerToString(GetLastError()) + ".";
+      Print(gStatus);
+      return false;
+   }
    return true;
+}
+
+// Position 1 with no stop at all gets its $ stop. If price is already past
+// that level, close it. Returns true if a position was closed.
+bool ApplyPosition1Stop(int type)
+{
+   bool closed = false;
+   RefreshRates();
+   double price   = (type == OP_BUY) ? Bid : Ask;
+   double minDist = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
+   for (int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES) || !Ours() || OrderType() != type) continue;
+      if (StageOf() != 1 || OrderStopLoss() != 0) continue;
+      double sl = NormalizeDouble((type == OP_BUY) ? OrderOpenPrice() - Position1StopDollars
+                                                   : OrderOpenPrice() + Position1StopDollars, Digits);
+      bool legal = (type == OP_BUY) ? price - sl >= minDist : sl - price >= minDist;
+      if (legal)
+      {
+         if (!OrderModify(OrderTicket(), OrderOpenPrice(), sl, 0, 0, clrGreen))
+            Print("Position 1 stop failed. Error ", GetLastError());
+      }
+      else if (OrderClose(OrderTicket(), OrderLots(), price, SlippagePoints, clrOrange))
+      {
+         closed = true;
+         gStatus = "Position 1 was already past its stop level: closed.";
+      }
+   }
+   return closed;
+}
+
+// Close positions whose stop is missing or not in profit. Returns true if any closed.
+bool CloseUnprotected(int type)
+{
+   bool closed = false;
+   double result = 0;
+   for (int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES) || !Ours() || OrderType() != type) continue;
+      double sl = OrderStopLoss();
+      bool inProfit = sl != 0 && ((type == OP_BUY) ? sl > OrderOpenPrice() : sl < OrderOpenPrice());
+      if (inProfit) continue;
+      double pnl = OrderProfit() + OrderSwap() + OrderCommission();
+      RefreshRates();
+      if (OrderClose(OrderTicket(), OrderLots(), type == OP_BUY ? Bid : Ask, SlippagePoints, clrOrange))
+      {
+         closed = true;
+         result += pnl;
+      }
+      else
+         Print("Leftover close failed on ticket ", OrderTicket(), ". Error ", GetLastError());
+   }
+   if (closed)
+      gStatus = "Position 1 closed and the rest had no profit stop: closed leftover, result $" + DoubleToString(result, 2) + ".";
+   return closed;
+}
+
+bool HasStage(int type, int stage)
+{
+   for (int i = OrdersTotal() - 1; i >= 0; i--)
+      if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES) && Ours() && OrderType() == type && StageOf() == stage)
+         return true;
+   return false;
 }
 
 //+------------------------------------------------------------------+
@@ -356,7 +456,12 @@ void ShowStatus()
    int t = Trend();
    double start = GlobalVariableCheck(gKeyStart) ? GlobalVariableGet(gKeyStart) : AccountBalance();
    double day = (start > 0) ? (AccountEquity() / start - 1.0) * 100.0 : 0;
-   Comment("P's three-position method (original handoff)\n",
+   string prot = (Position1StopDollars > 0 || CloseLeftover || DailyLossLimitPercent > 0)
+               ? "Protections: P1 stop " + (Position1StopDollars > 0 ? "$" + DoubleToString(Position1StopDollars, 2) : "off") +
+                 ", leftover " + (CloseLeftover ? "on" : "off") +
+                 ", daily loss " + (DailyLossLimitPercent > 0 ? "-" + DoubleToString(DailyLossLimitPercent, 1) + "%" : "off")
+               : "Protections: all off (P's method as written)";
+   Comment("P's three-position method (original handoff)\n", prot, "\n",
            "AutoTrading: ", (IsTradeAllowed() ? "ON" : "OFF"), "\n",
            "Trend (30 min & 2 h): ", (t == OP_BUY ? "UP (buy)" : t == OP_SELL ? "DOWN (sell)" : "unclear (wait)"), "\n",
            "Spread: $", DoubleToString(Ask - Bid, 2), "\n",

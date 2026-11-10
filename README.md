@@ -26,7 +26,15 @@ Built from the Oct 18 handoff only, with the numbers the user chose: $3 steps, $
 
 Stops are never negative and never move backward. It never adds to a losing position and never opens a fourth.
 
-**Deliberately left out, because P's rules don't define them:** a stop before a position is in profit, an exit when the trend turns, closing a leftover position, and a daily loss limit. **A losing position is held** until it recovers or the broker's margin stop-out closes it. On the Nov 4–6 demo, trades in that state caused most of the losses.
+**Protections, added by the user on Nov 10.** They're on by default, and each has an off switch:
+
+| Setting | Default | What it does | Off = P's rule |
+|---|---|---|---|
+| `Position1StopDollars` | 10 | Position 1 opens with a stop $10 against it (about -$40 at 0.04 lots) until its profit stop replaces it | 0 |
+| `CloseLeftover` | true | If Position 1 is gone and a later position has no profit stop yet, close it | false |
+| `DailyLossLimitPercent` | 3 | At -3% for the day, close everything and stop until tomorrow | 0 |
+
+With all three off, the bot is P's method exactly as written: a losing position is held until it recovers or the broker's margin stop-out closes it. The trend-turn exit is not included.
 
 It uses magic number **444444**, so it never touches trades from `XAUUSD_TrendScaler` (333333).
 
