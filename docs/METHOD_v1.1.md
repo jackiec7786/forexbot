@@ -84,6 +84,7 @@ This document lists every rule the EA uses and where each one came from, as the 
 | # | Rule | Source | EA input |
 |---|---|---|---|
 | 7.1 | **Position 1 stop:** Position 1 opens with a stop **$10 against it**, replaced by P's profit stop once it's $3 in profit. Positions 2 and 3 have no losing-side stop (they open only after earlier positions are protected) | **USER (Nov 6)**, **changes** P's "we never set a negative stop loss". Reason: Position 1 before its first stop caused −$867 of −$1,271 total losses (Nov 4–6). P to be told | `Position1StopDollars = 10` (0 = P's original) |
+| 7.1b | **Positions 2 and 3** open with a stop **$1.50 against them** until the profit stops replace it; after one closes at a loss, no new add for 5 minutes | **USER (Nov 10)** | `LaterStopDollars = 1.50`, `AddCooldownMinutes = 5` |
 | 7.2 | No daily loss limit | USER (kept P pure, Nov 5) | `DailyLossLimitPercent = 0` |
 | 7.3 | *Optional, off:* safety stop on every position (suggested $10) and daily loss limit (suggested 3%) | SAFETY alternative, **not approved** | same inputs |
 
@@ -149,6 +150,7 @@ This is 1.5 days, mostly one strong uptrend and one sideways day. It isn't enoug
 | Nov 5 | Optional safety stop also covers open positions (off) | SAFETY alternative |
 | Nov 5 | Slower trend-reversal exit (2 h / 3 h) written; **not installed** by USER | SAFETY proposal |
 | Nov 5 | Kept P's no-negative-stop rule; failsafe stays off | USER |
+| Nov 10 | **Position 2/3 starting stop $1.50 + 5-minute add cooldown.** Between Nov 6 and Nov 10 (215 trades, profit factor 1.12), Position 2 caught right after opening lost 16 × about −$23 = −$369 | USER |
 | Nov 6 | **Back to $3 / $0.50.** P's $1.75 / $0.25 did worse on demo: profit factor 0.67 vs 0.89, average win $6.80 vs $11.79 | USER |
 | Nov 6 | **Position 1 stop, $10** (rule 7.1), after analysis of 131 trades showed Position 1 before its first stop as the main loss source | USER (changes P's rule; P to be told) |
 | Nov 5 | **P's answer to questions 2 and 3:** step $3 → **$1.75**, buffer $0.50 → **$0.25** | P |

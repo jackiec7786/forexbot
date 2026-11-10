@@ -45,6 +45,8 @@ input double SessionProfitStopPercent = 25.0;  // At this gain: close everything
 
 input string _s5 = "===== Loss-side stops (0 = off) =====";
 input double Position1StopDollars  = 10.0; // USER (Nov 6): stop on Position 1 only, until its profit stop. 0 = P's original (none)
+input double LaterStopDollars      = 1.50; // USER (Nov 10): starting stop on Positions 2 and 3 until the profit stops replace it. 0 = off
+input int    AddCooldownMinutes    = 5;    // After Position 2 or 3 closes at a loss, wait this long before adding again
 input double SafetyStopDollars     = 0.0;  // Losing stop on every position. 0 = owner's method (none)
 input double RiskPercentPerStack   = 1.0;  // Used only with SIZING_RISK_PERCENT
 input double DailyLossLimitPercent = 0.0;  // Close everything at this loss. 0 = off
@@ -163,7 +165,7 @@ void RunStrategy()
    }
 
    int type = (buys > 0) ? OP_BUY : OP_SELL;
-   if ((SafetyStopDollars > 0 || Position1StopDollars > 0) && ApplySafetyStops(type)) return;
+   if ((SafetyStopDollars > 0 || Position1StopDollars > 0 || LaterStopDollars > 0) && ApplySafetyStops(type)) return;
    SetStatus("Managing " + IntegerToString(buys + sells) + " " + (type == OP_BUY ? "BUY" : "SELL") + " position(s).");
 
    // Follow the trend both ways: if it confirms the opposite direction,
@@ -206,7 +208,8 @@ void ShowStatus()
    double dayPct = (start > 0) ? (AccountEquity() / start - 1.0) * 100.0 : 0;
 
    string mode = (SafetyStopDollars > 0) ? "risk-limited"
-               : (Position1StopDollars > 0) ? "owner's method + $" + DoubleToString(Position1StopDollars, 2) + " Position 1 stop"
+               : (Position1StopDollars > 0) ? "owner's method + stops: P1 $" + DoubleToString(Position1StopDollars, 2) +
+                                              ", P2/P3 $" + DoubleToString(LaterStopDollars, 2)
                : "owner's method";
    Comment("XAUUSD three-position EA  |  ", mode, "\n",
            "AutoTrading: ", (IsTradeAllowed() ? "ON" : "OFF"), "\n",
@@ -335,6 +338,11 @@ void TryScaleIn(int type, int total)
 {
    if (total >= MAX_POSITIONS) return;
    if (TimeCurrent() < gLastScaleAttempt + 60) return;
+   if (RecentFailedAdd())
+   {
+      SetStatus("Position 2/3 was just stopped out. Pausing adds for " + IntegerToString(AddCooldownMinutes) + " min.");
+      return;
+   }
    if (!AllPositionsInProfit()) return;
    if (total >= 2 && !AllPositionsProtected(type)) return;
 
@@ -634,7 +642,27 @@ double LossStopFor(int stage)
 {
    if (SafetyStopDollars > 0) return SafetyStopDollars;
    if (stage == 1 && Position1StopDollars > 0) return Position1StopDollars;
+   if (stage >= 2 && LaterStopDollars > 0) return LaterStopDollars;
    return 0;
+}
+
+// True if one of our Position 2/3 trades closed at a loss within the cooldown.
+bool RecentFailedAdd()
+{
+   if (AddCooldownMinutes <= 0) return false;
+   int checked = 0;
+   for (int i = OrdersHistoryTotal() - 1; i >= 0 && checked < 30; i--)
+   {
+      if (!OrderSelect(i, SELECT_BY_POS, MODE_HISTORY) || !IsOurs()) continue;
+      if (OrderType() != OP_BUY && OrderType() != OP_SELL) continue;
+      checked++;
+      if (TimeCurrent() - OrderCloseTime() > AddCooldownMinutes * 60) continue;
+      string c = OrderComment();
+      if ((StringFind(c, "Pos 2") == 0 || StringFind(c, "Pos 3") == 0) &&
+          OrderProfit() + OrderSwap() + OrderCommission() < 0)
+         return true;
+   }
+   return false;
 }
 
 // True if the currently selected order is a Position 1.
