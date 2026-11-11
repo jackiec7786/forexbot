@@ -714,8 +714,8 @@ datetime EntryPauseUntil()
       bool lossSide = (OrderType() == OP_BUY) ? sl < OrderOpenPrice() : sl > OrderOpenPrice();
       bool atStop   = (OrderType() == OP_BUY) ? OrderClosePrice() <= sl + 0.05 : OrderClosePrice() >= sl - 0.05;
       if (!lossSide || !atStop) continue;
-      datetime end = OrderCloseTime() + StopoutCooldownMinutes * 60;
-      if (end > until) until = end;
+      datetime pauseEnd = OrderCloseTime() + StopoutCooldownMinutes * 60;
+      if (pauseEnd > until) until = pauseEnd;
    }
    return until;
 }
