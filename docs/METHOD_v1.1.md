@@ -150,6 +150,7 @@ This is 1.5 days, mostly one strong uptrend and one sideways day. It isn't enoug
 | Nov 5 | Optional safety stop also covers open positions (off) | SAFETY alternative |
 | Nov 5 | Slower trend-reversal exit (2 h / 3 h) written; **not installed** by USER | SAFETY proposal |
 | Nov 5 | Kept P's no-negative-stop rule; failsafe stays off | USER |
+| Nov 11 | **v1.30:** 15-minute pause on new Position 1 after a Position 1 loss-stop (replay of 148 stacks: +$238 in-sample); chop filter, reversal confirmation and post-burst pause added but **off** | USER |
 | Nov 10 | **Position 2/3 starting stop $1.50 + 5-minute add cooldown.** Between Nov 6 and Nov 10 (215 trades, profit factor 1.12), Position 2 caught right after opening lost 16 × about −$23 = −$369 | USER |
 | Nov 6 | **Back to $3 / $0.50.** P's $1.75 / $0.25 did worse on demo: profit factor 0.67 vs 0.89, average win $6.80 vs $11.79 | USER |
 | Nov 6 | **Position 1 stop, $10** (rule 7.1), after analysis of 131 trades showed Position 1 before its first stop as the main loss source | USER (changes P's rule; P to be told) |

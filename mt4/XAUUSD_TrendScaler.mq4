@@ -12,7 +12,8 @@
 //|  owner, not proven values.                                       |
 //+------------------------------------------------------------------+
 #property strict
-#property description "P's XAU/USD three-position method. Defaults follow the owner's rules (no losing stop)."
+#property version   "1.30"
+#property description "P's XAU/USD three-position method. v1.30: stop-out pause, chop filter, reversal confirm, post-burst pause (all switchable)."
 #property description "Set SizingMode = RISK_PERCENT and SafetyStopDollars > 0 to test the risk-limited alternative."
 
 enum ENUM_SIZING_MODE
@@ -47,6 +48,13 @@ input string _s5 = "===== Loss-side stops (0 = off) =====";
 input double Position1StopDollars  = 10.0; // USER (Nov 6): stop on Position 1 only, until its profit stop. 0 = P's original (none)
 input double LaterStopDollars      = 1.50; // USER (Nov 10): starting stop on Positions 2 and 3 until the profit stops replace it. 0 = off
 input int    AddCooldownMinutes    = 5;    // After Position 2 or 3 closes at a loss, wait this long before adding again
+
+input string _s5b = "===== v1.30 (0 or 1 = previous behaviour) =====";
+input int    StopoutCooldownMinutes   = 15;    // After Position 1 hits its loss stop, no new Position 1 for this long. 0 = off
+input double ChopATRMult              = 0.0;   // Skip entries if the 2-hour move < this x ATR(14). 0 = off (try 0.5)
+input int    ReversalConfirmBars      = 1;     // Trend exit needs this many closed bars reversed in a row. 1 = previous
+input int    PostBurstCooldownMinutes = 0;     // After a stack closes with >= PostBurstDollars profit, pause. 0 = off
+input double PostBurstDollars         = 100.0;
 input double SafetyStopDollars     = 0.0;  // Losing stop on every position. 0 = owner's method (none)
 input double RiskPercentPerStack   = 1.0;  // Used only with SIZING_RISK_PERCENT
 input double DailyLossLimitPercent = 0.0;  // Close everything at this loss. 0 = off
@@ -64,7 +72,9 @@ datetime gLastScaleAttempt = 0;
 datetime gLastTickLocal    = 0;
 string   gStatus           = "Starting up";
 string   gLastAttempt      = "none yet";
-string   gKeyDay, gKeyDayStart, gKeyLocked, gKeyLastId;
+string   gKeyDay, gKeyDayStart, gKeyLocked, gKeyLastId, gKeyBurstUntil;
+bool     gWasInStack       = false;
+double   gStackStartBal    = 0;
 
 //+------------------------------------------------------------------+
 int OnInit()
@@ -73,9 +83,10 @@ int OnInit()
    if (tfMinutes <= 0 || TrendShortMinutes < tfMinutes || TrendLongMinutes <= TrendShortMinutes ||
        TrendShortMinutes % tfMinutes != 0 || TrendLongMinutes % tfMinutes != 0 ||
        ExitShortMinutes < tfMinutes || ExitLongMinutes <= ExitShortMinutes ||
-       ExitShortMinutes % tfMinutes != 0 || ExitLongMinutes % tfMinutes != 0)
+       ExitShortMinutes % tfMinutes != 0 || ExitLongMinutes % tfMinutes != 0 ||
+       StopoutCooldownMinutes < 0 || PostBurstCooldownMinutes < 0 || ChopATRMult < 0 || ReversalConfirmBars < 1)
    {
-      Print("Trend and exit minutes must be multiples of the trend timeframe, with Long > Short.");
+      Print("Check inputs: trend/exit minutes must be multiples of the trend timeframe with Long > Short; v1.30 cooldowns and ChopATRMult >= 0; ReversalConfirmBars >= 1.");
       return INIT_PARAMETERS_INCORRECT;
    }
    if (StepDollars <= 0 || BufferDollars <= 0 || BufferDollars >= StepDollars)
@@ -104,6 +115,7 @@ int OnInit()
    gKeyDayStart = prefix + "daystart";
    gKeyLocked   = prefix + "locked";
    gKeyLastId   = prefix + "lastid";
+   gKeyBurstUntil = prefix + "burstuntil";
    if (!IsTesting() && GlobalVariableCheck(gKeyLastId))
       gLastSignalId = (long)GlobalVariableGet(gKeyLastId);
 
@@ -145,6 +157,7 @@ void RunStrategy()
 
    int buys  = CountPositions(OP_BUY);
    int sells = CountPositions(OP_SELL);
+   TrackStack(buys + sells);
 
    // Leftover check, every tick: Position 1 has closed (its stop was hit)
    // but a later position still has no profit stop. The move failed, so
@@ -171,7 +184,7 @@ void RunStrategy()
    // Follow the trend both ways: if it confirms the opposite direction,
    // close whatever is not yet protected by a profit stop.
    int against = (type == OP_BUY) ? OP_SELL : OP_BUY;
-   if (ExitOnTrendReversal && ExitTrendDirection() == against &&
+   if (ExitOnTrendReversal && ReversalConfirmed(against) &&
        CloseUnprotected(type, string("Trend turned ") + (type == OP_BUY ? "DOWN" : "UP"))) return;
    ManageProfitStops(type);
    TryScaleIn(type, buys + sells);
@@ -301,6 +314,13 @@ void TryOpenPosition1()
       return;
    }
 
+   datetime pauseUntil = EntryPauseUntil();
+   if (TimeCurrent() < pauseUntil)
+   {
+      SetStatus("Pause after a Position 1 stop-out or big win, until " + TimeToString(pauseUntil, TIME_MINUTES) + ".");
+      return;
+   }
+
    long barId = (long)iTime(Symbol(), TrendTimeframe, 1);
    if (barId == 0)
    {
@@ -317,6 +337,11 @@ void TryOpenPosition1()
    if (trend == NONE)
    {
       SetStatus("No clear trend (30 min and 2 h disagree). Waiting.");
+      return;
+   }
+   if (!ChopOk())
+   {
+      SetStatus("Chop filter: 2-hour move below " + DoubleToString(ChopATRMult, 2) + " x ATR. Waiting.");
       return;
    }
    if (!SpreadOk())
@@ -663,6 +688,84 @@ bool RecentFailedAdd()
          return true;
    }
    return false;
+}
+
+//+------------------------------------------------------------------+
+//| v1.30 additions                                                  |
+//+------------------------------------------------------------------+
+// Latest time new Position 1 entries are paused until: after a Position 1
+// loss-stop hit (read from history, so it survives restarts) or after a
+// big winning stack.
+datetime EntryPauseUntil()
+{
+   datetime until = 0;
+   if (GlobalVariableCheck(gKeyBurstUntil)) until = (datetime)GlobalVariableGet(gKeyBurstUntil);
+   if (StopoutCooldownMinutes <= 0) return until;
+
+   int checked = 0;
+   for (int i = OrdersHistoryTotal() - 1; i >= 0 && checked < 30; i--)
+   {
+      if (!OrderSelect(i, SELECT_BY_POS, MODE_HISTORY) || !IsOurs()) continue;
+      if (OrderType() != OP_BUY && OrderType() != OP_SELL) continue;
+      checked++;
+      if (StringFind(OrderComment(), "Pos 1") != 0) continue;
+      double sl = OrderStopLoss();
+      if (sl == 0) continue;
+      bool lossSide = (OrderType() == OP_BUY) ? sl < OrderOpenPrice() : sl > OrderOpenPrice();
+      bool atStop   = (OrderType() == OP_BUY) ? OrderClosePrice() <= sl + 0.05 : OrderClosePrice() >= sl - 0.05;
+      if (!lossSide || !atStop) continue;
+      datetime end = OrderCloseTime() + StopoutCooldownMinutes * 60;
+      if (end > until) until = end;
+   }
+   return until;
+}
+
+// Chop filter: the 2-hour move must be at least ChopATRMult x ATR(14).
+bool ChopOk()
+{
+   if (ChopATRMult <= 0) return true;
+   int tfMinutes = PeriodSeconds(TrendTimeframe) / 60;
+   double atr = iATR(Symbol(), TrendTimeframe, 14, 1);
+   double c1  = iClose(Symbol(), TrendTimeframe, 1);
+   double cN  = iClose(Symbol(), TrendTimeframe, 1 + TrendLongMinutes / tfMinutes);
+   if (atr <= 0 || c1 <= 0 || cN <= 0) return true;
+   return MathAbs(c1 - cN) >= ChopATRMult * atr;
+}
+
+// Trend exit: with 1 bar this is the previous behaviour; with more, the
+// exit reading must point against the trade on that many closed bars in a row.
+bool ReversalConfirmed(int against)
+{
+   if (ReversalConfirmBars <= 1) return ExitTrendDirection() == against;
+   int tfMinutes = PeriodSeconds(TrendTimeframe) / 60;
+   for (int k = 1; k <= ReversalConfirmBars; k++)
+   {
+      double c  = iClose(Symbol(), TrendTimeframe, k);
+      double ps = iClose(Symbol(), TrendTimeframe, k + ExitShortMinutes / tfMinutes);
+      double pl = iClose(Symbol(), TrendTimeframe, k + ExitLongMinutes / tfMinutes);
+      if (c <= 0 || ps <= 0 || pl <= 0) return false;
+      int dir = (c > ps && c > pl) ? OP_BUY : (c < ps && c < pl) ? OP_SELL : NONE;
+      if (dir != against) return false;
+   }
+   return true;
+}
+
+// Post-burst pause: when a stack closes with at least PostBurstDollars.
+void TrackStack(int count)
+{
+   if (count > 0)
+   {
+      if (!gWasInStack) { gWasInStack = true; gStackStartBal = AccountBalance(); }
+      return;
+   }
+   if (!gWasInStack) return;
+   gWasInStack = false;
+   double pnl = AccountBalance() - gStackStartBal;
+   if (PostBurstCooldownMinutes > 0 && pnl >= PostBurstDollars)
+   {
+      GlobalVariableSet(gKeyBurstUntil, (double)(TimeCurrent() + PostBurstCooldownMinutes * 60));
+      Print("Stack closed +$", DoubleToString(pnl, 2), ". Pausing new entries ", PostBurstCooldownMinutes, " min.");
+   }
 }
 
 // True if the currently selected order is a Position 1.

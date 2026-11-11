@@ -57,6 +57,12 @@ It uses magic number **444444**, so it never touches trades from `XAUUSD_TrendSc
 
 **Positions 2 and 3 start with a small stop** (`LaterStopDollars = 1.50`, added Nov 10). It sits $1.50 against their entry until the profit stops replace it. Before this, a Position 2 opened just before gold turned had no stop. It drifted down until Position 1's stop hit, and was then closed at about −$23 (16 times, −$369, between Nov 6 and Nov 10). Now it stops at about −$14 and Position 1 stays open. After a Position 2 or 3 closes at a loss, the bot waits `AddCooldownMinutes = 5` before adding again, so it doesn't re-buy at the same failing level.
 
+**v1.30 (Nov 11), all switchable:**
+- `StopoutCooldownMinutes = 15`: after Position 1 hits its loss stop, no new Position 1 for 15 minutes. Losing stop-outs come in clusters; replaying the 148 stacks from Nov 6–10, a 15-minute pause would have skipped 19 stacks worth −$238 (in-sample, so expect less).
+- `ChopATRMult = 0` (off): skip entries when the 2-hour move is under this × ATR(14). Untested; try 0.5 in the Strategy Tester.
+- `ReversalConfirmBars = 1` (previous behaviour): require the trend exit to hold for this many closed bars before closing.
+- `PostBurstCooldownMinutes = 0` (off): pause after a stack closes with at least `PostBurstDollars` profit.
+
 **Trend turns against you.** If the trend reading turns the other way (by default the same 30 min / 2 h reading as the entry), the EA closes every position that doesn't yet have a profit stop. In sideways markets this flip-flops (whipsaw). Setting `ExitShortMinutes = 120` and `ExitLongMinutes = 180` makes the exit slower, which is an option you can test. This can mean taking a loss. Positions already locked in profit keep their stops. Switch it off with `ExitOnTrendReversal = false`.
 
 **A stop is hit while another position is unprotected.** For example, Position 1 closes at its profit stop while Position 2 has no profit stop yet. The move has failed, so the EA closes the leftover too, usually a small net loss. This is checked on every price tick, so a failed close or a restart can't leave a position stranded. No position is ever left behind without a stop. Earlier stops also aren't pulled up when a new position opens, so a small dip doesn't knock out Position 1 early.
