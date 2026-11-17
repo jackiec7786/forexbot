@@ -151,6 +151,7 @@ This is 1.5 days, mostly one strong uptrend and one sideways day. It isn't enoug
 | Nov 5 | Optional safety stop also covers open positions (off) | SAFETY alternative |
 | Nov 5 | Slower trend-reversal exit (2 h / 3 h) written; **not installed** by USER | SAFETY proposal |
 | Nov 5 | Kept P's no-negative-stop rule; failsafe stays off | USER |
+| Nov 17 | **No new Position 1 from 19:00 to 02:00 server time** (late New York). Nov 6–10 by session: Asia +$42, London +$213, overlap +$403, late New York −$146 | USER |
 | Nov 17 | **Day lock added** ($100 / 50%). Replay of Nov 4–10 trades: green days 2 of 5 → 4 of 5, total +$162 → +$486; current-settings period +$512 → +$579. Five days of data, in-sample | USER |
 | Nov 17 | **Daily loss limit switched on, 5%** (3% in a replay would have stopped Nov 9 at −$162 before it recovered to +$99) | USER |
 | Nov 17 | **Daily exit in dollars:** no new Position 1 at +$400, close all and stop for the day at +$500 | USER |

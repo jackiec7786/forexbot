@@ -64,6 +64,8 @@ input double RiskPercentPerStack   = 1.0;  // Used only with SIZING_RISK_PERCENT
 input double DailyLossLimitPercent = 5.0;  // USER (Nov 17): at this % loss today, close everything, done for the day. 0 = off
 
 input string _s6 = "===== General =====";
+input int    NoEntryStartHour = 19;    // USER (Nov 17): no new Position 1 from this server hour... (same as End = off)
+input int    NoEntryEndHour   = 2;     // ...until this server hour. Default 19-02 = late New York and rollover
 input double MaxSpreadDollars = 0.60;
 input int    MagicNumber      = 333333;
 input int    SlippagePoints   = 30;
@@ -96,6 +98,11 @@ int OnInit()
    if (StepDollars <= 0 || BufferDollars <= 0 || BufferDollars >= StepDollars)
    {
       Print("Need StepDollars > BufferDollars > 0.");
+      return INIT_PARAMETERS_INCORRECT;
+   }
+   if (NoEntryStartHour < 0 || NoEntryStartHour > 23 || NoEntryEndHour < 0 || NoEntryEndHour > 23)
+   {
+      Print("NoEntryStartHour and NoEntryEndHour must be between 0 and 23 (server time).");
       return INIT_PARAMETERS_INCORRECT;
    }
    if (DayLockArmDollars < 0 || DayLockKeepPercent < 0 || DayLockKeepPercent >= 100)
@@ -243,6 +250,8 @@ void ShowStatus()
            ", close all at +$", DoubleToString(DailyProfitStopDollars, 0),
            (DailyLossLimitPercent > 0 ? ", stop day at -$" + DoubleToString(start * DailyLossLimitPercent / 100.0, 0) : ""), "\n",
            DayLockText(), "\n",
+           "Server time ", TimeToString(TimeCurrent(), TIME_MINUTES),
+           (NoEntryStartHour != NoEntryEndHour ? "  |  no new trades " + HourText(NoEntryStartHour) + "-" + HourText(NoEntryEndHour) : ""), "\n",
            "Status: ", gStatus);
 }
 
@@ -349,6 +358,12 @@ void TryOpenPosition1()
    if (SessionGoalReached())
    {
       SetStatus("Session goal reached: no new Position 1 today.");
+      return;
+   }
+   if (InNoEntryHours())
+   {
+      SetStatus("No new trades between " + HourText(NoEntryStartHour) + " and " + HourText(NoEntryEndHour) +
+                " server time (late New York). Waiting.");
       return;
    }
 
@@ -727,6 +742,18 @@ bool RecentFailedAdd()
    }
    return false;
 }
+
+// True during the server hours in which no new Position 1 may open.
+// Open positions are still managed, and adds to a running stack are allowed.
+bool InNoEntryHours()
+{
+   if (NoEntryStartHour == NoEntryEndHour) return false;
+   int h = TimeHour(TimeCurrent());
+   if (NoEntryStartHour < NoEntryEndHour) return h >= NoEntryStartHour && h < NoEntryEndHour;
+   return h >= NoEntryStartHour || h < NoEntryEndHour;   // window crosses midnight
+}
+
+string HourText(int h) { return (h < 10 ? "0" : "") + IntegerToString(h) + ":00"; }
 
 // Panel line for the day lock.
 string DayLockText()
