@@ -43,6 +43,8 @@ input int    ExitLongMinutes     = 120;   // [TEST] ...and this many. Same as en
 input string _s4 = "===== Session (owner targets) =====";
 input double SessionGoalPercent       = 10.0;  // At this gain: no new Position 1 (open trades keep running)
 input double SessionProfitStopPercent = 25.0;  // At this gain: close everything, done for the day
+input double DailyGoalDollars         = 400.0; // USER (Nov 17): at this $ gain today, no new Position 1. 0 = off
+input double DailyProfitStopDollars   = 500.0; // USER (Nov 17): at this $ gain today, close everything, done for the day. 0 = off
 
 input string _s5 = "===== Loss-side stops (0 = off) =====";
 input double Position1StopDollars  = 10.0; // USER (Nov 6): stop on Position 1 only, until its profit stop. 0 = P's original (none)
@@ -151,7 +153,7 @@ void RunStrategy()
    }
    if (!SessionAllowsTrading())
    {
-      SetStatus("Done for today: session profit stop or loss limit reached.");
+      SetStatus("Done for today: daily profit stop or loss limit reached. Trading resumes next broker day.");
       return;
    }
 
@@ -228,8 +230,9 @@ void ShowStatus()
            "AutoTrading: ", (IsTradeAllowed() ? "ON" : "OFF"), "\n",
            "Trend (30 min & 2 h): ", trendText, "\n",
            "Spread: $", DoubleToString(Ask - Bid, 2), "  (max $", DoubleToString(MaxSpreadDollars, 2), ")\n",
-           "Today: ", DoubleToString(dayPct, 2), "%  (goal +", DoubleToString(SessionGoalPercent, 0),
-           "%, stop +", DoubleToString(SessionProfitStopPercent, 0), "%)\n",
+           "Today: $", DoubleToString(AccountEquity() - start, 2), " (", DoubleToString(dayPct, 2), "%)",
+           "  |  no new trades at +$", DoubleToString(DailyGoalDollars, 0),
+           ", close all at +$", DoubleToString(DailyProfitStopDollars, 0), "\n",
            "Status: ", gStatus);
 }
 
@@ -252,6 +255,13 @@ bool SessionAllowsTrading()
    double start  = GlobalVariableGet(gKeyDayStart);
    double equity = AccountEquity();
 
+   if (DailyProfitStopDollars > 0 && equity >= start + DailyProfitStopDollars)
+   {
+      Print("Daily profit stop (+$", DoubleToString(DailyProfitStopDollars, 0), ") reached. Closing all, done for today.");
+      CloseAll();
+      GlobalVariableSet(gKeyLocked, 1);
+      return false;
+   }
    if (SessionProfitStopPercent > 0 && equity >= start * (1.0 + SessionProfitStopPercent / 100.0))
    {
       Print("Session profit stop (+", DoubleToString(SessionProfitStopPercent, 1), "%) reached. Closing all, done for today.");
@@ -271,8 +281,10 @@ bool SessionAllowsTrading()
 
 bool SessionGoalReached()
 {
+   double start = GlobalVariableGet(gKeyDayStart);
+   if (DailyGoalDollars > 0 && AccountEquity() >= start + DailyGoalDollars) return true;
    if (SessionGoalPercent <= 0) return false;
-   return AccountEquity() >= GlobalVariableGet(gKeyDayStart) * (1.0 + SessionGoalPercent / 100.0);
+   return AccountEquity() >= start * (1.0 + SessionGoalPercent / 100.0);
 }
 
 //+------------------------------------------------------------------+

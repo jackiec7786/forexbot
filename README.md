@@ -74,7 +74,9 @@ It uses magic number **444444**, so it never touches trades from `XAUUSD_TrendSc
 - never add to a losing position
 - three positions at most
 
-**Session (per broker day):**
+**Daily exit in dollars (Nov 17).** At **+$400** for the day (`DailyGoalDollars`), no new Position 1 opens; open trades keep running on their profit stops. At **+$500** (`DailyProfitStopDollars`), everything closes and the bot stops until the next broker day. Both count open trades (equity) against the day's starting balance. Set either to 0 to switch it off.
+
+**Session (per broker day), percent version:**
 - at +10% equity, no new Position 1 (open trades keep running)
 - at +25%, close everything and stop for the day
 
