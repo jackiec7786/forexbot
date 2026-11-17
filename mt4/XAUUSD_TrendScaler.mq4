@@ -45,6 +45,8 @@ input double SessionGoalPercent       = 10.0;  // At this gain: no new Position 
 input double SessionProfitStopPercent = 25.0;  // At this gain: close everything, done for the day
 input double DailyGoalDollars         = 400.0; // USER (Nov 17): at this $ gain today, no new Position 1. 0 = off
 input double DailyProfitStopDollars   = 500.0; // USER (Nov 17): at this $ gain today, close everything, done for the day. 0 = off
+input double DayLockArmDollars        = 100.0; // USER (Nov 17): once today's banked profit reaches this, the day lock is armed. 0 = off
+input double DayLockKeepPercent       = 50.0;  // Day lock: stop for the day if today's result falls to this % of the best banked profit
 
 input string _s5 = "===== Loss-side stops (0 = off) =====";
 input double Position1StopDollars  = 10.0; // USER (Nov 6): stop on Position 1 only, until its profit stop. 0 = P's original (none)
@@ -59,7 +61,7 @@ input int    PostBurstCooldownMinutes = 0;     // After a stack closes with >= P
 input double PostBurstDollars         = 100.0;
 input double SafetyStopDollars     = 0.0;  // Losing stop on every position. 0 = owner's method (none)
 input double RiskPercentPerStack   = 1.0;  // Used only with SIZING_RISK_PERCENT
-input double DailyLossLimitPercent = 3.0;  // USER (Nov 17): at this % loss today, close everything, done for the day. 0 = off
+input double DailyLossLimitPercent = 5.0;  // USER (Nov 17): at this % loss today, close everything, done for the day. 0 = off
 
 input string _s6 = "===== General =====";
 input double MaxSpreadDollars = 0.60;
@@ -74,7 +76,7 @@ datetime gLastScaleAttempt = 0;
 datetime gLastTickLocal    = 0;
 string   gStatus           = "Starting up";
 string   gLastAttempt      = "none yet";
-string   gKeyDay, gKeyDayStart, gKeyLocked, gKeyLastId, gKeyBurstUntil;
+string   gKeyDay, gKeyDayStart, gKeyLocked, gKeyLastId, gKeyBurstUntil, gKeyDayPeak;
 bool     gWasInStack       = false;
 double   gStackStartBal    = 0;
 
@@ -94,6 +96,11 @@ int OnInit()
    if (StepDollars <= 0 || BufferDollars <= 0 || BufferDollars >= StepDollars)
    {
       Print("Need StepDollars > BufferDollars > 0.");
+      return INIT_PARAMETERS_INCORRECT;
+   }
+   if (DayLockArmDollars < 0 || DayLockKeepPercent < 0 || DayLockKeepPercent >= 100)
+   {
+      Print("Day lock: DayLockArmDollars must be >= 0 and DayLockKeepPercent between 0 and 99.");
       return INIT_PARAMETERS_INCORRECT;
    }
    if (SizingMode == SIZING_RISK_PERCENT && (SafetyStopDollars <= 0 || RiskPercentPerStack <= 0))
@@ -118,6 +125,7 @@ int OnInit()
    gKeyLocked   = prefix + "locked";
    gKeyLastId   = prefix + "lastid";
    gKeyBurstUntil = prefix + "burstuntil";
+   gKeyDayPeak    = prefix + "daypeak";
    if (!IsTesting() && GlobalVariableCheck(gKeyLastId))
       gLastSignalId = (long)GlobalVariableGet(gKeyLastId);
 
@@ -153,7 +161,7 @@ void RunStrategy()
    }
    if (!SessionAllowsTrading())
    {
-      SetStatus("Done for today: daily profit stop or loss limit reached. Trading resumes next broker day.");
+      SetStatus("Done for today: day lock, daily profit stop or loss limit reached. Trading resumes next broker day.");
       return;
    }
 
@@ -234,6 +242,7 @@ void ShowStatus()
            "  |  no new trades at +$", DoubleToString(DailyGoalDollars, 0),
            ", close all at +$", DoubleToString(DailyProfitStopDollars, 0),
            (DailyLossLimitPercent > 0 ? ", stop day at -$" + DoubleToString(start * DailyLossLimitPercent / 100.0, 0) : ""), "\n",
+           DayLockText(), "\n",
            "Status: ", gStatus);
 }
 
@@ -250,11 +259,27 @@ bool SessionAllowsTrading()
       GlobalVariableSet(gKeyDay, (double)today);
       GlobalVariableSet(gKeyDayStart, AccountBalance());
       GlobalVariableSet(gKeyLocked, 0);
+      GlobalVariableSet(gKeyDayPeak, 0);
    }
    if (GlobalVariableGet(gKeyLocked) > 0) return false;
 
    double start  = GlobalVariableGet(gKeyDayStart);
    double equity = AccountEquity();
+
+   // Day lock: remember the best banked (closed-trade) profit of the day.
+   // Once it has reached DayLockArmDollars, stop for the day if the day's
+   // result, open trades included, falls back to DayLockKeepPercent of it.
+   double banked = AccountBalance() - start;
+   double peak   = GlobalVariableGet(gKeyDayPeak);
+   if (banked > peak) { peak = banked; GlobalVariableSet(gKeyDayPeak, peak); }
+   if (DayLockArmDollars > 0 && peak >= DayLockArmDollars && equity - start <= peak * DayLockKeepPercent / 100.0)
+   {
+      Print("Day lock: best banked +$", DoubleToString(peak, 2), ", day fell back to +$", DoubleToString(equity - start, 2),
+            ". Closing all, done for today.");
+      CloseAll();
+      GlobalVariableSet(gKeyLocked, 1);
+      return false;
+   }
 
    if (DailyProfitStopDollars > 0 && equity >= start + DailyProfitStopDollars)
    {
@@ -701,6 +726,17 @@ bool RecentFailedAdd()
          return true;
    }
    return false;
+}
+
+// Panel line for the day lock.
+string DayLockText()
+{
+   if (DayLockArmDollars <= 0) return "Day lock: off";
+   double peak = GlobalVariableCheck(gKeyDayPeak) ? GlobalVariableGet(gKeyDayPeak) : 0;
+   if (peak < DayLockArmDollars)
+      return "Day lock: arms once $" + DoubleToString(DayLockArmDollars, 0) + " is banked today (banked best: $" + DoubleToString(peak, 2) + ")";
+   return "Day lock: ARMED. Best banked $" + DoubleToString(peak, 2) + ", stops the day at +$" +
+          DoubleToString(peak * DayLockKeepPercent / 100.0, 2);
 }
 
 //+------------------------------------------------------------------+

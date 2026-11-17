@@ -85,7 +85,8 @@ This document lists every rule the EA uses and where each one came from, as the 
 |---|---|---|---|
 | 7.1 | **Position 1 stop:** Position 1 opens with a stop **$10 against it**, replaced by P's profit stop once it's $3 in profit. Positions 2 and 3 have no losing-side stop (they open only after earlier positions are protected) | **USER (Nov 6)**, **changes** P's "we never set a negative stop loss". Reason: Position 1 before its first stop caused −$867 of −$1,271 total losses (Nov 4–6). P to be told | `Position1StopDollars = 10` (0 = P's original) |
 | 7.1b | **Positions 2 and 3** open with a stop **$1.50 against them** until the profit stops replace it; after one closes at a loss, no new add for 5 minutes | **USER (Nov 10)** | `LaterStopDollars = 1.50`, `AddCooldownMinutes = 5` |
-| 7.2 | **Daily loss limit 3%:** if equity is 3% below the day's starting balance, close everything and stop until the next broker day | USER (Nov 17; was off since Nov 5) | `DailyLossLimitPercent = 3` |
+| 7.2 | **Daily loss limit 5%:** if equity is 5% below the day's starting balance, close everything and stop until the next broker day | USER (Nov 17; was off since Nov 5; 3% replayed and found too tight) | `DailyLossLimitPercent = 5` |
+| 7.3a | **Day lock:** once $100 is banked in a day, stop for the day if the day's result falls to 50% of the best banked profit | USER (Nov 17), goal "be in profit every day" | `DayLockArmDollars = 100`, `DayLockKeepPercent = 50` |
 | 7.3 | *Optional, off:* safety stop on every position (suggested $10) and daily loss limit (suggested 3%) | SAFETY alternative, **not approved** | same inputs |
 
 **Exposure under 7.1:** Position 1 can lose about $40 at most (0.04 lots × $10), more if price jumps past the stop. With `Position1StopDollars = 0` (P's original), only rules 5.2 and 5.3, or the broker's margin stop-out, end a losing trade.
@@ -150,7 +151,8 @@ This is 1.5 days, mostly one strong uptrend and one sideways day. It isn't enoug
 | Nov 5 | Optional safety stop also covers open positions (off) | SAFETY alternative |
 | Nov 5 | Slower trend-reversal exit (2 h / 3 h) written; **not installed** by USER | SAFETY proposal |
 | Nov 5 | Kept P's no-negative-stop rule; failsafe stays off | USER |
-| Nov 17 | **Daily loss limit switched on, 3%** | USER |
+| Nov 17 | **Day lock added** ($100 / 50%). Replay of Nov 4–10 trades: green days 2 of 5 → 4 of 5, total +$162 → +$486; current-settings period +$512 → +$579. Five days of data, in-sample | USER |
+| Nov 17 | **Daily loss limit switched on, 5%** (3% in a replay would have stopped Nov 9 at −$162 before it recovered to +$99) | USER |
 | Nov 17 | **Daily exit in dollars:** no new Position 1 at +$400, close all and stop for the day at +$500 | USER |
 | Nov 11 | **v1.30:** 15-minute pause on new Position 1 after a Position 1 loss-stop (replay of 148 stacks: +$238 in-sample); chop filter, reversal confirmation and post-burst pause added but **off** | USER |
 | Nov 10 | **Position 2/3 starting stop $1.50 + 5-minute add cooldown.** Between Nov 6 and Nov 10 (215 trades, profit factor 1.12), Position 2 caught right after opening lost 16 × about −$23 = −$369 | USER |
