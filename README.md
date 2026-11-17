@@ -67,7 +67,9 @@ It uses magic number **444444**, so it never touches trades from `XAUUSD_TrendSc
 
 **A stop is hit while another position is unprotected.** For example, Position 1 closes at its profit stop while Position 2 has no profit stop yet. The move has failed, so the EA closes the leftover too, usually a small net loss. This is checked on every price tick, so a failed close or a restart can't leave a position stranded. No position is ever left behind without a stop. Earlier stops also aren't pulled up when a new position opens, so a small dip doesn't knock out Position 1 early.
 
-**General failsafe (optional, off by default).** `SafetyStopDollars` puts a stop that far against you on every position, including ones already open, so a wrong trade closes at a known, small loss. `DailyLossLimitPercent` closes everything and stops for the day at that loss. Suggested: 10 and 3. This is a negative stop, so it changes P's "never negative" rule. Profit stops still take over once a trade is in profit.
+**Daily loss limit (on since Nov 17).** `DailyLossLimitPercent = 3`: if the day is down 3% of its starting balance (about −$150 on $5,000, open trades included), everything closes and the bot stops until the next broker day. Set 0 to switch it off.
+
+**General failsafe (optional, off by default).** `SafetyStopDollars` puts a stop that far against you on every position, including ones already open. It replaces the Position 1 and Position 2/3 stops with one distance for all. Profit stops still take over once a trade is in profit.
 
 **Rules that never change:**
 - stops only move in your favour and are always in profit

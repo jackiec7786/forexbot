@@ -59,7 +59,7 @@ input int    PostBurstCooldownMinutes = 0;     // After a stack closes with >= P
 input double PostBurstDollars         = 100.0;
 input double SafetyStopDollars     = 0.0;  // Losing stop on every position. 0 = owner's method (none)
 input double RiskPercentPerStack   = 1.0;  // Used only with SIZING_RISK_PERCENT
-input double DailyLossLimitPercent = 0.0;  // Close everything at this loss. 0 = off
+input double DailyLossLimitPercent = 3.0;  // USER (Nov 17): at this % loss today, close everything, done for the day. 0 = off
 
 input string _s6 = "===== General =====";
 input double MaxSpreadDollars = 0.60;
@@ -232,7 +232,8 @@ void ShowStatus()
            "Spread: $", DoubleToString(Ask - Bid, 2), "  (max $", DoubleToString(MaxSpreadDollars, 2), ")\n",
            "Today: $", DoubleToString(AccountEquity() - start, 2), " (", DoubleToString(dayPct, 2), "%)",
            "  |  no new trades at +$", DoubleToString(DailyGoalDollars, 0),
-           ", close all at +$", DoubleToString(DailyProfitStopDollars, 0), "\n",
+           ", close all at +$", DoubleToString(DailyProfitStopDollars, 0),
+           (DailyLossLimitPercent > 0 ? ", stop day at -$" + DoubleToString(start * DailyLossLimitPercent / 100.0, 0) : ""), "\n",
            "Status: ", gStatus);
 }
 
