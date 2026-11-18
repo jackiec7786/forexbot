@@ -11,7 +11,8 @@ The full rules register (each rule, its source and when it changed) is in [`docs
 | Path | What it is |
 |---|---|
 | `mt4/P_ThreePosition.mq4` | **P's method rebuilt from the original handoff only** (Nov 10). No added exit rules. See below. |
-| `mt4/XAUUSD_TrendScaler.mq4` | The earlier EA with the added rules (trend exit, leftover close, Position 1 stop). Kept for comparison. |
+| `mt4/XAUUSD_TrendScaler_v2.mq4` | **Current bot (Nov 18).** The v1.30 bot with no starting stop on Positions 2/3 (`LaterStopDollars = 0`), daily limits off, New York entry block on. Same magic number as v1: remove v1 from the chart first. |
+| `mt4/XAUUSD_TrendScaler.mq4` | v1.30, kept for comparison. Differs from v2 only in `LaterStopDollars = 1.50`. |
 | `server/`, `tradingview/`, `deploy/` | **Parked.** An earlier TradingView signal server with a news filter. The current EA doesn't use it. |
 
 ## P_ThreePosition: P's original method (Nov 10 rebuild)

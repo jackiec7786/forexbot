@@ -84,7 +84,7 @@ This document lists every rule the EA uses and where each one came from, as the 
 | # | Rule | Source | EA input |
 |---|---|---|---|
 | 7.1 | **Position 1 stop:** Position 1 opens with a stop **$10 against it**, replaced by P's profit stop once it's $3 in profit. Positions 2 and 3 have no losing-side stop (they open only after earlier positions are protected) | **USER (Nov 6)**, **changes** P's "we never set a negative stop loss". Reason: Position 1 before its first stop caused −$867 of −$1,271 total losses (Nov 4–6). P to be told | `Position1StopDollars = 10` (0 = P's original) |
-| 7.1b | **Positions 2 and 3** open with a stop **$1.50 against them** until the profit stops replace it; after one closes at a loss, no new add for 5 minutes | **USER (Nov 10)** | `LaterStopDollars = 1.50`, `AddCooldownMinutes = 5` |
+| 7.1b | **Positions 2 and 3** open with a stop **$1.50 against them** (v1.30 only; **off in v2**) until the profit stops replace it; after one closes at a loss, no new add for 5 minutes | **USER (Nov 10)** | `LaterStopDollars = 1.50`, `AddCooldownMinutes = 5` |
 | 7.2 | Daily loss limit: **off** (`DailyLossLimitPercent = 0`). Available: closes everything and stops for the day at the chosen % loss | USER (Nov 18: no limit; was 5% from Nov 17) | `DailyLossLimitPercent = 0` |
 | 7.3a | Day lock: **off** (`DayLockArmDollars = 0`). Available: once $100 is banked, stop for the day if the result falls to 50% of the best banked profit | USER (Nov 18, off; added Nov 17) | `DayLockArmDollars = 0`, `DayLockKeepPercent = 50` |
 | 7.3 | *Optional, off:* safety stop on every position (suggested $10) and daily loss limit (suggested 3%) | SAFETY alternative, **not approved** | same inputs |
@@ -151,6 +151,7 @@ This is 1.5 days, mostly one strong uptrend and one sideways day. It isn't enoug
 | Nov 5 | Optional safety stop also covers open positions (off) | SAFETY alternative |
 | Nov 5 | Slower trend-reversal exit (2 h / 3 h) written; **not installed** by USER | SAFETY proposal |
 | Nov 5 | Kept P's no-negative-stop rule; failsafe stays off | USER |
+| Nov 18 | **XAUUSD_TrendScaler_v2: `LaterStopDollars` 1.50 → 0.** Nov 10–18 demo (515 trades, PF 0.94): Position 2 with the $1.50 stop reached a profit stop 64% of the time and netted −$244 over 230 trades; before it, 83% and +$208 over 108 trades. The earlier prediction that the stop would save about $145 was wrong | USER (on my recommendation) |
 | Nov 18 | **Back to P's original with the fixes, no daily limits.** +$400 / +$500 exit, day lock and loss limit switched **off**; fixes, $10 Position 1 stop and the late New York block stay on | USER |
 | Nov 17 | **No new Position 1 from 19:00 to 02:00 server time** (late New York). Nov 6–10 by session: Asia +$42, London +$213, overlap +$403, late New York −$146 | USER |
 | Nov 17 | **Day lock added** ($100 / 50%). Replay of Nov 4–10 trades: green days 2 of 5 → 4 of 5, total +$162 → +$486; current-settings period +$512 → +$579. Five days of data, in-sample | USER |
