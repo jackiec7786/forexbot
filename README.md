@@ -67,11 +67,13 @@ It uses magic number **444444**, so it never touches trades from `XAUUSD_TrendSc
 
 **A stop is hit while another position is unprotected.** For example, Position 1 closes at its profit stop while Position 2 has no profit stop yet. The move has failed, so the EA closes the leftover too, usually a small net loss. This is checked on every price tick, so a failed close or a restart can't leave a position stranded. No position is ever left behind without a stop. Earlier stops also aren't pulled up when a new position opens, so a small dip doesn't knock out Position 1 early.
 
+**Current defaults (Nov 18): P's original method plus the fixes, no daily limits.** Kept: the $10 Position 1 stop, the $1.50 Position 2/3 starting stop, the 5-minute add pause, the leftover close, the trend exit, the 15-minute pause after a Position 1 stop-out, and the late New York block. Off: the +$400 / +$500 exit, the day lock and the daily loss limit. P's own percent targets (+10% no new trades, +25% close all) are unchanged.
+
 **No new trades in late New York (Nov 17).** Between **19:00 and 02:00 server time** (`NoEntryStartHour`, `NoEntryEndHour`), the bot opens no new Position 1. Open trades are still managed and a running stack can still add. On the Nov 6–10 demo trades these hours lost $146 (profit factor 0.74), while London (10:00–15:00) and the London + New York overlap (15:00–19:00) made $616. That's three days of data, in-sample. Hours are broker server time (top of Market Watch); set both to the same number to switch it off.
 
-**Day lock (Nov 17), to keep a good day green.** Once the day's banked (closed-trade) profit has reached **$100** (`DayLockArmDollars`), the bot stops for the day if the day's result, open trades included, falls back to **50%** of the best banked profit (`DayLockKeepPercent`). Example: best banked +$200 → the day stops at +$100. Replayed on the Nov 4–10 demo trades it turned 2 of 3 red days green and didn't cut the +$385 day, though on that day it came within about $6 of stopping at around +$107. It can't make a day green that never reaches +$100. Set `DayLockArmDollars = 0` to switch it off.
+**Day lock (Nov 17; OFF since Nov 18).** Optional.  Once the day's banked (closed-trade) profit has reached **$100** (`DayLockArmDollars`), the bot stops for the day if the day's result, open trades included, falls back to **50%** of the best banked profit (`DayLockKeepPercent`). Example: best banked +$200 → the day stops at +$100. Replayed on the Nov 4–10 demo trades it turned 2 of 3 red days green and didn't cut the +$385 day, though on that day it came within about $6 of stopping at around +$107. It can't make a day green that never reaches +$100. Set `DayLockArmDollars = 0` to switch it off.
 
-**Daily loss limit (Nov 17).** `DailyLossLimitPercent = 5`: if the day is down 5% of its starting balance (about −$250 on $5,000, open trades included), everything closes and the bot stops until the next broker day. 3% was tried in a replay and was too tight: this bot's days often dip −$150 to −$216 before recovering. Set 0 to switch it off.
+**Daily loss limit (Nov 17; OFF since Nov 18, `DailyLossLimitPercent = 0`).** Optional. Example if switched on at 5%: if the day is down 5% of its starting balance (about −$250 on $5,000, open trades included), everything closes and the bot stops until the next broker day. 3% was tried in a replay and was too tight: this bot's days often dip −$150 to −$216 before recovering. Set 0 to switch it off.
 
 **General failsafe (optional, off by default).** `SafetyStopDollars` puts a stop that far against you on every position, including ones already open. It replaces the Position 1 and Position 2/3 stops with one distance for all. Profit stops still take over once a trade is in profit.
 
@@ -80,7 +82,7 @@ It uses magic number **444444**, so it never touches trades from `XAUUSD_TrendSc
 - never add to a losing position
 - three positions at most
 
-**Daily exit in dollars (Nov 17).** At **+$400** for the day (`DailyGoalDollars`), no new Position 1 opens; open trades keep running on their profit stops. At **+$500** (`DailyProfitStopDollars`), everything closes and the bot stops until the next broker day. Both count open trades (equity) against the day's starting balance. Set either to 0 to switch it off.
+**Daily exit in dollars (Nov 17; OFF since Nov 18, both set to 0).** Optional. Example if switched on: At **+$400** for the day (`DailyGoalDollars`), no new Position 1 opens; open trades keep running on their profit stops. At **+$500** (`DailyProfitStopDollars`), everything closes and the bot stops until the next broker day. Both count open trades (equity) against the day's starting balance. Set either to 0 to switch it off.
 
 **Session (per broker day), percent version:**
 - at +10% equity, no new Position 1 (open trades keep running)

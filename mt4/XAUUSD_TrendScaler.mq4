@@ -43,9 +43,9 @@ input int    ExitLongMinutes     = 120;   // [TEST] ...and this many. Same as en
 input string _s4 = "===== Session (owner targets) =====";
 input double SessionGoalPercent       = 10.0;  // At this gain: no new Position 1 (open trades keep running)
 input double SessionProfitStopPercent = 25.0;  // At this gain: close everything, done for the day
-input double DailyGoalDollars         = 400.0; // USER (Nov 17): at this $ gain today, no new Position 1. 0 = off
-input double DailyProfitStopDollars   = 500.0; // USER (Nov 17): at this $ gain today, close everything, done for the day. 0 = off
-input double DayLockArmDollars        = 100.0; // USER (Nov 17): once today's banked profit reaches this, the day lock is armed. 0 = off
+input double DailyGoalDollars         = 0.0;   // At this $ gain today, no new Position 1. 0 = off (was 400 on Nov 17; USER turned off Nov 18)
+input double DailyProfitStopDollars   = 0.0;   // At this $ gain today, close everything, done for the day. 0 = off (was 500)
+input double DayLockArmDollars        = 0.0;   // Once today's banked profit reaches this, the day lock is armed. 0 = off (was 100)
 input double DayLockKeepPercent       = 50.0;  // Day lock: stop for the day if today's result falls to this % of the best banked profit
 
 input string _s5 = "===== Loss-side stops (0 = off) =====";
@@ -61,7 +61,7 @@ input int    PostBurstCooldownMinutes = 0;     // After a stack closes with >= P
 input double PostBurstDollars         = 100.0;
 input double SafetyStopDollars     = 0.0;  // Losing stop on every position. 0 = owner's method (none)
 input double RiskPercentPerStack   = 1.0;  // Used only with SIZING_RISK_PERCENT
-input double DailyLossLimitPercent = 5.0;  // USER (Nov 17): at this % loss today, close everything, done for the day. 0 = off
+input double DailyLossLimitPercent = 0.0;  // At this % loss today, close everything, done for the day. 0 = off (USER: no limit, Nov 18)
 
 input string _s6 = "===== General =====";
 input int    NoEntryStartHour = 19;    // USER (Nov 17): no new Position 1 from this server hour... (same as End = off)
@@ -245,11 +245,8 @@ void ShowStatus()
            "AutoTrading: ", (IsTradeAllowed() ? "ON" : "OFF"), "\n",
            "Trend (30 min & 2 h): ", trendText, "\n",
            "Spread: $", DoubleToString(Ask - Bid, 2), "  (max $", DoubleToString(MaxSpreadDollars, 2), ")\n",
-           "Today: $", DoubleToString(AccountEquity() - start, 2), " (", DoubleToString(dayPct, 2), "%)",
-           "  |  no new trades at +$", DoubleToString(DailyGoalDollars, 0),
-           ", close all at +$", DoubleToString(DailyProfitStopDollars, 0),
-           (DailyLossLimitPercent > 0 ? ", stop day at -$" + DoubleToString(start * DailyLossLimitPercent / 100.0, 0) : ""), "\n",
-           DayLockText(), "\n",
+           "Today: $", DoubleToString(AccountEquity() - start, 2), " (", DoubleToString(dayPct, 2), "%)", DailyLimitsText(start), "\n",
+           (DayLockArmDollars > 0 ? DayLockText() + "\n" : ""),
            "Server time ", TimeToString(TimeCurrent(), TIME_MINUTES),
            (NoEntryStartHour != NoEntryEndHour ? "  |  no new trades " + HourText(NoEntryStartHour) + "-" + HourText(NoEntryEndHour) : ""), "\n",
            "Status: ", gStatus);
@@ -754,6 +751,17 @@ bool InNoEntryHours()
 }
 
 string HourText(int h) { return (h < 10 ? "0" : "") + IntegerToString(h) + ":00"; }
+
+// Panel text for the daily limits that are switched on. Empty when none are.
+string DailyLimitsText(double start)
+{
+   string t = "";
+   if (DailyGoalDollars > 0)       t += ", no new trades at +$" + DoubleToString(DailyGoalDollars, 0);
+   if (DailyProfitStopDollars > 0) t += ", close all at +$" + DoubleToString(DailyProfitStopDollars, 0);
+   if (DailyLossLimitPercent > 0)  t += ", stop day at -$" + DoubleToString(start * DailyLossLimitPercent / 100.0, 0);
+   if (t == "") return "  |  no daily limit";
+   return "  |" + StringSubstr(t, 1);
+}
 
 // Panel line for the day lock.
 string DayLockText()
