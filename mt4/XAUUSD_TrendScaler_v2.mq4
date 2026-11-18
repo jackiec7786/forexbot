@@ -1,0 +1,946 @@
+//+------------------------------------------------------------------+
+//|                                       XAUUSD_TrendScaler_v2.mq4  |
+//|  P's XAU/USD three-position method, version 2 (Nov 18, 2026).   |
+//|                                                                  |
+//|  Same as XAUUSD_TrendScaler v1.30 except:                        |
+//|    - LaterStopDollars = 0: Positions 2 and 3 get NO starting    |
+//|      stop. On the Nov 10-18 demo the $1.50 stop closed 35% of    |
+//|      Position 2s at about -$12 (net -$244 over 230 trades),      |
+//|      against +$208 over 108 trades without it.                   |
+//|    - Daily profit/loss limits are off; the New York entry block  |
+//|      (19:00-02:00 server time) is on.                            |
+//|  Fixes kept: leftover close every tick, $10 Position 1 stop,     |
+//|  5-minute add pause, 15-minute pause after a Position 1 stop-out.|
+//|  Same magic number as v1, so it takes over v1's open trades.     |
+//|  Remove v1 from the chart before attaching this.                 |
+//|  Numbers marked [TEST] are test assumptions, not proven values.  |
+//+------------------------------------------------------------------+
+#property strict
+#property version   "2.00"
+#property description "P's XAU/USD three-position method, v2: no starting stop on Positions 2/3; daily limits off; New York entry block on."
+#property description "Set SizingMode = RISK_PERCENT and SafetyStopDollars > 0 to test the risk-limited alternative."
+
+enum ENUM_SIZING_MODE
+{
+   SIZING_FIXED        = 0, // Fixed lots: 0.04 / 0.08 / 0.10 (owner's method)
+   SIZING_RISK_PERCENT = 1  // Risk %: size from SafetyStopDollars (alternative)
+};
+
+input string          _s1 = "===== Trend (line graph) =====";
+input ENUM_TIMEFRAMES TrendTimeframe    = PERIOD_M5;
+input int             TrendShortMinutes = 30;   // [TEST] Price must be beyond its level this many minutes ago...
+input int             TrendLongMinutes  = 120;  // [TEST] ...and beyond its level this many minutes ago
+
+input string           _s2 = "===== Position sizes =====";
+input ENUM_SIZING_MODE SizingMode      = SIZING_FIXED;
+input double           Lots1           = 0.04;  // Position 1 lots (always the smallest)
+input double           Lots2           = 0.08;  // Position 2 lots
+input double           Lots3           = 0.10;  // Position 3 lots
+
+input string _s3 = "===== Scaling and profit stops =====";
+input double StepDollars   = 3.0;   // Favourable move before the next position (P's Nov 5 test value: 1.75)
+input double BufferDollars = 0.50;  // Stop distance past the latest position's open (P's Nov 5 test value: 0.25)
+input bool   ExitOnTrendReversal = true;  // Close positions without a profit stop when the trend confirms the opposite way
+input int    ExitShortMinutes    = 30;    // [TEST] Exit needs price against its level this many minutes ago...
+input int    ExitLongMinutes     = 120;   // [TEST] ...and this many. Same as entry; try 120/180 to reduce whipsaw
+
+input string _s4 = "===== Session (owner targets) =====";
+input double SessionGoalPercent       = 10.0;  // At this gain: no new Position 1 (open trades keep running)
+input double SessionProfitStopPercent = 25.0;  // At this gain: close everything, done for the day
+input double DailyGoalDollars         = 0.0;   // At this $ gain today, no new Position 1. 0 = off (was 400 on Nov 17; USER turned off Nov 18)
+input double DailyProfitStopDollars   = 0.0;   // At this $ gain today, close everything, done for the day. 0 = off (was 500)
+input double DayLockArmDollars        = 0.0;   // Once today's banked profit reaches this, the day lock is armed. 0 = off (was 100)
+input double DayLockKeepPercent       = 50.0;  // Day lock: stop for the day if today's result falls to this % of the best banked profit
+
+input string _s5 = "===== Loss-side stops (0 = off) =====";
+input double Position1StopDollars  = 10.0; // USER (Nov 6): stop on Position 1 only, until its profit stop. 0 = P's original (none)
+input double LaterStopDollars      = 0.0;  // Starting stop on Positions 2 and 3. 0 = off (v2 default; v1 used 1.50, which hurt Position 2 on the Nov 10-18 demo)
+input int    AddCooldownMinutes    = 5;    // After Position 2 or 3 closes at a loss, wait this long before adding again
+
+input string _s5b = "===== v1.30 (0 or 1 = previous behaviour) =====";
+input int    StopoutCooldownMinutes   = 15;    // After Position 1 hits its loss stop, no new Position 1 for this long. 0 = off
+input double ChopATRMult              = 0.0;   // Skip entries if the 2-hour move < this x ATR(14). 0 = off (try 0.5)
+input int    ReversalConfirmBars      = 1;     // Trend exit needs this many closed bars reversed in a row. 1 = previous
+input int    PostBurstCooldownMinutes = 0;     // After a stack closes with >= PostBurstDollars profit, pause. 0 = off
+input double PostBurstDollars         = 100.0;
+input double SafetyStopDollars     = 0.0;  // Losing stop on every position. 0 = owner's method (none)
+input double RiskPercentPerStack   = 1.0;  // Used only with SIZING_RISK_PERCENT
+input double DailyLossLimitPercent = 0.0;  // At this % loss today, close everything, done for the day. 0 = off (USER: no limit, Nov 18)
+
+input string _s6 = "===== General =====";
+input int    NoEntryStartHour = 19;    // USER (Nov 17): no new Position 1 from this server hour... (same as End = off)
+input int    NoEntryEndHour   = 2;     // ...until this server hour. Default 19-02 = late New York and rollover
+input double MaxSpreadDollars = 0.60;
+input int    MagicNumber      = 333333;
+input int    SlippagePoints   = 30;
+
+#define NONE          -1
+#define MAX_POSITIONS 3     // The method has exactly three positions. No fourth.
+
+long     gLastSignalId     = 0;
+datetime gLastScaleAttempt = 0;
+datetime gLastTickLocal    = 0;
+string   gStatus           = "Starting up";
+string   gLastAttempt      = "none yet";
+string   gKeyDay, gKeyDayStart, gKeyLocked, gKeyLastId, gKeyBurstUntil, gKeyDayPeak;
+bool     gWasInStack       = false;
+double   gStackStartBal    = 0;
+
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   int tfMinutes = PeriodSeconds(TrendTimeframe) / 60;
+   if (tfMinutes <= 0 || TrendShortMinutes < tfMinutes || TrendLongMinutes <= TrendShortMinutes ||
+       TrendShortMinutes % tfMinutes != 0 || TrendLongMinutes % tfMinutes != 0 ||
+       ExitShortMinutes < tfMinutes || ExitLongMinutes <= ExitShortMinutes ||
+       ExitShortMinutes % tfMinutes != 0 || ExitLongMinutes % tfMinutes != 0 ||
+       StopoutCooldownMinutes < 0 || PostBurstCooldownMinutes < 0 || ChopATRMult < 0 || ReversalConfirmBars < 1)
+   {
+      Print("Check inputs: trend/exit minutes must be multiples of the trend timeframe with Long > Short; v1.30 cooldowns and ChopATRMult >= 0; ReversalConfirmBars >= 1.");
+      return INIT_PARAMETERS_INCORRECT;
+   }
+   if (StepDollars <= 0 || BufferDollars <= 0 || BufferDollars >= StepDollars)
+   {
+      Print("Need StepDollars > BufferDollars > 0.");
+      return INIT_PARAMETERS_INCORRECT;
+   }
+   if (NoEntryStartHour < 0 || NoEntryStartHour > 23 || NoEntryEndHour < 0 || NoEntryEndHour > 23)
+   {
+      Print("NoEntryStartHour and NoEntryEndHour must be between 0 and 23 (server time).");
+      return INIT_PARAMETERS_INCORRECT;
+   }
+   if (DayLockArmDollars < 0 || DayLockKeepPercent < 0 || DayLockKeepPercent >= 100)
+   {
+      Print("Day lock: DayLockArmDollars must be >= 0 and DayLockKeepPercent between 0 and 99.");
+      return INIT_PARAMETERS_INCORRECT;
+   }
+   if (SizingMode == SIZING_RISK_PERCENT && (SafetyStopDollars <= 0 || RiskPercentPerStack <= 0))
+   {
+      Print("RISK_PERCENT sizing needs SafetyStopDollars > 0 and RiskPercentPerStack > 0.");
+      return INIT_PARAMETERS_INCORRECT;
+   }
+
+   // Gold only: the dollar steps and buffers are sized for gold prices.
+   string sym = Symbol();
+   StringToUpper(sym);
+   if (StringFind(sym, "XAU") < 0 && StringFind(sym, "GOLD") < 0)
+   {
+      Alert("XAUUSD_TrendScaler_v2 only runs on a gold chart (XAUUSD). This chart is ", Symbol(), ".");
+      return INIT_FAILED;
+   }
+
+   // Per account, so switching accounts never reuses another account's day start.
+   string prefix = "TS_" + IntegerToString(AccountNumber()) + "_" + IntegerToString(MagicNumber) + "_" + Symbol() + "_";
+   gKeyDay      = prefix + "day";
+   gKeyDayStart = prefix + "daystart";
+   gKeyLocked   = prefix + "locked";
+   gKeyLastId   = prefix + "lastid";
+   gKeyBurstUntil = prefix + "burstuntil";
+   gKeyDayPeak    = prefix + "daypeak";
+   if (!IsTesting() && GlobalVariableCheck(gKeyLastId))
+      gLastSignalId = (long)GlobalVariableGet(gKeyLastId);
+
+   if (SafetyStopDollars <= 0 && Position1StopDollars <= 0)
+      Print("Owner's method: no losing stop. A trade that goes against you stays open until it recovers or the broker's margin stop-out closes it.");
+
+   gLastTickLocal = TimeLocal();
+   if (!IsTesting()) EventSetTimer(10);   // Keeps the status panel honest when no prices arrive
+   ShowStatus();
+   return INIT_SUCCEEDED;
+}
+
+void OnDeinit(const int reason)
+{
+   EventKillTimer();
+   Comment("");
+}
+
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   gLastTickLocal = TimeLocal();
+   RunStrategy();
+   ShowStatus();
+}
+
+void RunStrategy()
+{
+   if (!IsTradeAllowed())
+   {
+      SetStatus("Trading is OFF. Turn on the AutoTrading button and tick 'Allow live trading' in the EA settings.");
+      return;
+   }
+   if (!SessionAllowsTrading())
+   {
+      SetStatus("Done for today: day lock, daily profit stop or loss limit reached. Trading resumes next broker day.");
+      return;
+   }
+
+   int buys  = CountPositions(OP_BUY);
+   int sells = CountPositions(OP_SELL);
+   TrackStack(buys + sells);
+
+   // Leftover check, every tick: Position 1 has closed (its stop was hit)
+   // but a later position still has no profit stop. The move failed, so
+   // close the leftover. Checked every tick, so a failed close or a restart
+   // can never leave one stranded.
+   if (buys + sells > 0)
+   {
+      int left = (buys > 0) ? OP_BUY : OP_SELL;
+      if (!HasPosition1(left) && !AllPositionsProtected(left) &&
+          CloseUnprotected(left, "Position 1 closed and the rest had no profit stop"))
+         return;
+   }
+
+   if (buys + sells == 0)
+   {
+      TryOpenPosition1();
+      return;
+   }
+
+   int type = (buys > 0) ? OP_BUY : OP_SELL;
+   if ((SafetyStopDollars > 0 || Position1StopDollars > 0 || LaterStopDollars > 0) && ApplySafetyStops(type)) return;
+   SetStatus("Managing " + IntegerToString(buys + sells) + " " + (type == OP_BUY ? "BUY" : "SELL") + " position(s).");
+
+   // Follow the trend both ways: if it confirms the opposite direction,
+   // close whatever is not yet protected by a profit stop.
+   int against = (type == OP_BUY) ? OP_SELL : OP_BUY;
+   if (ExitOnTrendReversal && ReversalConfirmed(against) &&
+       CloseUnprotected(type, string("Trend turned ") + (type == OP_BUY ? "DOWN" : "UP"))) return;
+   ManageProfitStops(type);
+   TryScaleIn(type, buys + sells);
+}
+
+// No ticks means the market is closed or the connection is down. Say so.
+void OnTimer()
+{
+   int quietSeconds = (int)(TimeLocal() - gLastTickLocal);
+   if (quietSeconds >= 120)
+   {
+      gStatus = "No price updates for " + IntegerToString(quietSeconds / 60) +
+                " min. Market closed (weekend/holiday) or no connection to the broker.";
+      ShowStatus();
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Status panel (top-left of the chart) and log                     |
+//+------------------------------------------------------------------+
+void SetStatus(string text)
+{
+   if (text != gStatus && !IsTesting()) Print("Status: ", text);
+   gStatus = text;
+}
+
+void ShowStatus()
+{
+   if (IsTesting() && !IsVisualMode()) return;
+
+   int    trend  = TrendDirection();
+   string trendText = (trend == OP_BUY) ? "UP (buy)" : (trend == OP_SELL) ? "DOWN (sell)" : "unclear (wait)";
+   double start  = GlobalVariableCheck(gKeyDayStart) ? GlobalVariableGet(gKeyDayStart) : AccountBalance();
+   double dayPct = (start > 0) ? (AccountEquity() / start - 1.0) * 100.0 : 0;
+
+   string mode = (SafetyStopDollars > 0) ? "risk-limited"
+               : (Position1StopDollars > 0) ? "owner's method + stops: P1 $" + DoubleToString(Position1StopDollars, 2) +
+                                              ", P2/P3 " + (LaterStopDollars > 0 ? "$" + DoubleToString(LaterStopDollars, 2) : "no starting stop")
+               : "owner's method";
+   Comment("XAUUSD three-position EA v2  |  ", mode, "\n",
+           "AutoTrading: ", (IsTradeAllowed() ? "ON" : "OFF"), "\n",
+           "Trend (30 min & 2 h): ", trendText, "\n",
+           "Spread: $", DoubleToString(Ask - Bid, 2), "  (max $", DoubleToString(MaxSpreadDollars, 2), ")\n",
+           "Today: $", DoubleToString(AccountEquity() - start, 2), " (", DoubleToString(dayPct, 2), "%)", DailyLimitsText(start), "\n",
+           (DayLockArmDollars > 0 ? DayLockText() + "\n" : ""),
+           "Server time ", TimeToString(TimeCurrent(), TIME_MINUTES),
+           (NoEntryStartHour != NoEntryEndHour ? "  |  no new trades " + HourText(NoEntryStartHour) + "-" + HourText(NoEntryEndHour) : ""), "\n",
+           "Status: ", gStatus);
+}
+
+//+------------------------------------------------------------------+
+//| Session: resets at the start of each broker day.                 |
+//| +Goal%: no new Position 1. +ProfitStop%: close all, lock the day.|
+//| Optional -DailyLoss%: close all, lock the day.                   |
+//+------------------------------------------------------------------+
+bool SessionAllowsTrading()
+{
+   datetime today = iTime(Symbol(), PERIOD_D1, 0);
+   if (!GlobalVariableCheck(gKeyDay) || (datetime)GlobalVariableGet(gKeyDay) != today)
+   {
+      GlobalVariableSet(gKeyDay, (double)today);
+      GlobalVariableSet(gKeyDayStart, AccountBalance());
+      GlobalVariableSet(gKeyLocked, 0);
+      GlobalVariableSet(gKeyDayPeak, 0);
+   }
+   if (GlobalVariableGet(gKeyLocked) > 0) return false;
+
+   double start  = GlobalVariableGet(gKeyDayStart);
+   double equity = AccountEquity();
+
+   // Day lock: remember the best banked (closed-trade) profit of the day.
+   // Once it has reached DayLockArmDollars, stop for the day if the day's
+   // result, open trades included, falls back to DayLockKeepPercent of it.
+   double banked = AccountBalance() - start;
+   double peak   = GlobalVariableGet(gKeyDayPeak);
+   if (banked > peak) { peak = banked; GlobalVariableSet(gKeyDayPeak, peak); }
+   if (DayLockArmDollars > 0 && peak >= DayLockArmDollars && equity - start <= peak * DayLockKeepPercent / 100.0)
+   {
+      Print("Day lock: best banked +$", DoubleToString(peak, 2), ", day fell back to +$", DoubleToString(equity - start, 2),
+            ". Closing all, done for today.");
+      CloseAll();
+      GlobalVariableSet(gKeyLocked, 1);
+      return false;
+   }
+
+   if (DailyProfitStopDollars > 0 && equity >= start + DailyProfitStopDollars)
+   {
+      Print("Daily profit stop (+$", DoubleToString(DailyProfitStopDollars, 0), ") reached. Closing all, done for today.");
+      CloseAll();
+      GlobalVariableSet(gKeyLocked, 1);
+      return false;
+   }
+   if (SessionProfitStopPercent > 0 && equity >= start * (1.0 + SessionProfitStopPercent / 100.0))
+   {
+      Print("Session profit stop (+", DoubleToString(SessionProfitStopPercent, 1), "%) reached. Closing all, done for today.");
+      CloseAll();
+      GlobalVariableSet(gKeyLocked, 1);
+      return false;
+   }
+   if (DailyLossLimitPercent > 0 && equity <= start * (1.0 - DailyLossLimitPercent / 100.0))
+   {
+      Print("Daily loss limit (-", DoubleToString(DailyLossLimitPercent, 1), "%) hit. Closing all, done for today.");
+      CloseAll();
+      GlobalVariableSet(gKeyLocked, 1);
+      return false;
+   }
+   return true;
+}
+
+bool SessionGoalReached()
+{
+   double start = GlobalVariableGet(gKeyDayStart);
+   if (DailyGoalDollars > 0 && AccountEquity() >= start + DailyGoalDollars) return true;
+   if (SessionGoalPercent <= 0) return false;
+   return AccountEquity() >= start * (1.0 + SessionGoalPercent / 100.0);
+}
+
+//+------------------------------------------------------------------+
+//| Trend: on closed bars, price above its level both TrendShort and |
+//| TrendLong minutes ago = BUY; below both = SELL; else WAIT.       |
+//+------------------------------------------------------------------+
+int TrendDirection()
+{
+   return TrendOver(TrendShortMinutes, TrendLongMinutes);
+}
+
+// Slower reading used only to exit, so short dips don't cause whipsaw.
+int ExitTrendDirection()
+{
+   return TrendOver(ExitShortMinutes, ExitLongMinutes);
+}
+
+int TrendOver(int shortMinutes, int longMinutes)
+{
+   int tfMinutes = PeriodSeconds(TrendTimeframe) / 60;
+   double now   = iClose(Symbol(), TrendTimeframe, 1);
+   double pastShort = iClose(Symbol(), TrendTimeframe, 1 + shortMinutes / tfMinutes);
+   double pastLong  = iClose(Symbol(), TrendTimeframe, 1 + longMinutes / tfMinutes);
+   if (now <= 0 || pastShort <= 0 || pastLong <= 0) return NONE;
+
+   if (now > pastShort && now > pastLong) return OP_BUY;
+   if (now < pastShort && now < pastLong) return OP_SELL;
+   return NONE;   // Sideways or conflicting: WAIT
+}
+
+//+------------------------------------------------------------------+
+//| Entries                                                          |
+//+------------------------------------------------------------------+
+void TryOpenPosition1()
+{
+   if (SessionGoalReached())
+   {
+      SetStatus("Session goal reached: no new Position 1 today.");
+      return;
+   }
+   if (InNoEntryHours())
+   {
+      SetStatus("No new trades between " + HourText(NoEntryStartHour) + " and " + HourText(NoEntryEndHour) +
+                " server time (late New York). Waiting.");
+      return;
+   }
+
+   datetime pauseUntil = EntryPauseUntil();
+   if (TimeCurrent() < pauseUntil)
+   {
+      SetStatus("Pause after a Position 1 stop-out or big win, until " + TimeToString(pauseUntil, TIME_MINUTES) + ".");
+      return;
+   }
+
+   long barId = (long)iTime(Symbol(), TrendTimeframe, 1);
+   if (barId == 0)
+   {
+      SetStatus("Loading 5-minute price history. If this stays, open an M5 chart of this symbol once.");
+      return;
+   }
+   if (barId == gLastSignalId)
+   {
+      SetStatus("Waiting for the next 5-minute bar. Last attempt: " + gLastAttempt);
+      return;   // At most one entry per closed bar
+   }
+
+   int trend = TrendDirection();
+   if (trend == NONE)
+   {
+      SetStatus("No clear trend (30 min and 2 h disagree). Waiting.");
+      return;
+   }
+   if (!ChopOk())
+   {
+      SetStatus("Chop filter: 2-hour move below " + DoubleToString(ChopATRMult, 2) + " x ATR. Waiting.");
+      return;
+   }
+   if (!SpreadOk())
+   {
+      SetStatus("Trend found but spread $" + DoubleToString(Ask - Bid, 2) + " is above MaxSpreadDollars. Waiting.");
+      return;
+   }
+
+   if (OpenPosition(trend, 1))
+      SetStatus("Opened Position 1 " + (trend == OP_BUY ? "BUY" : "SELL") + ".");
+   gLastAttempt = gStatus;   // Keep the result (or failure reason) on the panel
+   RememberSignal(barId);   // One attempt per bar, success or not
+}
+
+// Owner's sequence: favourable move of StepDollars beyond the latest
+// position and every position in profit -> protect the earlier
+// position(s) with a profit stop FIRST -> only then open the next one.
+void TryScaleIn(int type, int total)
+{
+   if (total >= MAX_POSITIONS) return;
+   if (TimeCurrent() < gLastScaleAttempt + 60) return;
+   if (RecentFailedAdd())
+   {
+      SetStatus("Position 2/3 was just stopped out. Pausing adds for " + IntegerToString(AddCooldownMinutes) + " min.");
+      return;
+   }
+   if (!AllPositionsInProfit()) return;
+   if (total >= 2 && !AllPositionsProtected(type)) return;
+
+   RefreshRates();
+   double moved = (type == OP_BUY) ? Bid - HighestOpen(OP_BUY) : LowestOpen(OP_SELL) - Ask;
+   if (moved < StepDollars) return;
+   if (!SpreadOk()) return;
+
+   if (total == 1 && !AllPositionsProtected(type))
+   {
+      ProtectPosition1(type);
+      if (!AllPositionsProtected(type))
+      {
+         SetStatus("Position 1 is in profit but its stop was not accepted yet. Position 2 waits.");
+         return;
+      }
+   }
+
+   gLastScaleAttempt = TimeCurrent();
+   if (OpenPosition(type, total + 1))
+      ManageProfitStops(type);   // Move stops at once if price already allows
+}
+
+// Position 1's first stop: BufferDollars past its own entry, in profit.
+void ProtectPosition1(int type)
+{
+   RefreshRates();
+   double price   = (type == OP_BUY) ? Bid : Ask;
+   double minDist = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
+   for (int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES) || !IsOurs() || OrderType() != type) continue;
+      double target = NormalizeDouble((type == OP_BUY) ? OrderOpenPrice() + BufferDollars
+                                                       : OrderOpenPrice() - BufferDollars, Digits);
+      bool legal = (type == OP_BUY) ? price - target >= minDist : target - price >= minDist;
+      if (!legal) continue;
+      if (OrderModify(OrderTicket(), OrderOpenPrice(), target, 0, 0, clrGreen))
+         SetStatus("Position 1 protected at " + DoubleToString(target, Digits) + ". Opening Position 2.");
+      else
+         Print("Position 1 stop failed. Error ", GetLastError());
+   }
+}
+
+bool OpenPosition(int type, int stage)
+{
+   double lots = LotsForStage(stage);
+   if (lots <= 0) return false;
+
+   ResetLastError();
+   if (AccountFreeMarginCheck(Symbol(), type, lots) <= 0 || GetLastError() == ERR_NOT_ENOUGH_MONEY)
+   {
+      Print("Position ", stage, " skipped: not enough margin for ", DoubleToString(lots, 2),
+            " lots at this leverage. The formula size was not reduced.");
+      SetStatus("Position " + IntegerToString(stage) + " skipped: not enough margin for " + DoubleToString(lots, 2) +
+                " lots. Leverage too low for the formula.");
+      return false;
+   }
+
+   RefreshRates();
+   double price = (type == OP_BUY) ? Ask : Bid;
+   double sl    = 0;
+   double lossStop = LossStopFor(stage);
+   if (lossStop > 0)
+      sl = NormalizeDouble((type == OP_BUY) ? price - lossStop : price + lossStop, Digits);
+
+   string tag = "Pos " + IntegerToString(stage);
+   color  clr = (type == OP_BUY) ? clrBlue : clrRed;
+
+   int ticket = OrderSend(Symbol(), type, lots, price, SlippagePoints, sl, 0, tag, MagicNumber, 0, clr);
+   if (ticket >= 0) return true;
+
+   int err = GetLastError();
+   if (sl == 0 || err != ERR_INVALID_STOPS)
+   {
+      Print(tag, " OrderSend failed. Error ", err);
+      SetStatus(tag + " rejected by the broker. Error " + IntegerToString(err) + ".");
+      return false;
+   }
+
+   // Some ECN accounts reject a stop on market orders: open, then attach
+   // the safety stop. If that fails, close: never leave it unprotected
+   // when the safety stop is switched on.
+   RefreshRates();
+   price  = (type == OP_BUY) ? Ask : Bid;
+   ticket = OrderSend(Symbol(), type, lots, price, SlippagePoints, 0, 0, tag, MagicNumber, 0, clr);
+   if (ticket < 0)
+   {
+      Print(tag, " OrderSend (no SL) failed. Error ", GetLastError());
+      return false;
+   }
+   if (!OrderSelect(ticket, SELECT_BY_TICKET)) return false;
+
+   sl = NormalizeDouble((type == OP_BUY) ? OrderOpenPrice() - lossStop
+                                         : OrderOpenPrice() + lossStop, Digits);
+   if (OrderModify(ticket, OrderOpenPrice(), sl, 0, 0, clrGreen)) return true;
+
+   Print("Could not attach safety stop (error ", GetLastError(), "). Closing ", tag, ".");
+   RefreshRates();
+   if (!OrderClose(ticket, OrderLots(), (type == OP_BUY) ? Bid : Ask, SlippagePoints, clrWhite))
+      Print("URGENT: failed to close ticket ", ticket, ". Error ", GetLastError());
+   return false;
+}
+
+//+------------------------------------------------------------------+
+//| Sizes                                                            |
+//+------------------------------------------------------------------+
+double StageWeight(int stage)
+{
+   if (stage == 1) return Lots1;
+   if (stage == 2) return Lots2;
+   return Lots3;
+}
+
+double LotsForStage(int stage)
+{
+   double step   = MarketInfo(Symbol(), MODE_LOTSTEP);
+   double minLot = MarketInfo(Symbol(), MODE_MINLOT);
+   double maxLot = MarketInfo(Symbol(), MODE_MAXLOT);
+   if (step <= 0) return 0;
+
+   double wanted;
+   if (SizingMode == SIZING_FIXED)
+   {
+      wanted = StageWeight(stage);
+   }
+   else
+   {
+      // Total loss if all three positions hit SafetyStopDollars = RiskPercentPerStack,
+      // split in the same 0.04 : 0.08 : 0.10 proportions as the formula.
+      double tickValue = MarketInfo(Symbol(), MODE_TICKVALUE);
+      double tickSize  = MarketInfo(Symbol(), MODE_TICKSIZE);
+      if (tickValue <= 0 || tickSize <= 0) return 0;
+      double share      = StageWeight(stage) / (Lots1 + Lots2 + Lots3);
+      double riskMoney  = AccountBalance() * RiskPercentPerStack / 100.0 * share;
+      double lossPerLot = SafetyStopDollars / tickSize * tickValue;
+      wanted = riskMoney / lossPerLot;
+   }
+
+   double lots = MathFloor(wanted / step + 1e-9) * step;
+   if (MathAbs(lots - wanted) > 1e-9)
+      Print("Position ", stage, ": wanted ", DoubleToString(wanted, 4), " lots, broker lot step allows ",
+            DoubleToString(lots, 2), ".");
+   if (lots > maxLot)
+   {
+      Print("Position ", stage, ": ", DoubleToString(lots, 2), " lots is above the broker maximum. Skipped.");
+      SetStatus("Position " + IntegerToString(stage) + " skipped: size above the broker maximum.");
+      return 0;
+   }
+   if (lots < minLot)
+   {
+      Print("Position ", stage, ": ", DoubleToString(wanted, 4), " lots is below the broker minimum. Skipped.");
+      SetStatus("Position " + IntegerToString(stage) + " skipped: size below the broker minimum.");
+      return 0;
+   }
+   return NormalizeDouble(lots, 2);
+}
+
+bool SpreadOk()
+{
+   RefreshRates();
+   return (Ask - Bid) <= MaxSpreadDollars;
+}
+
+void RememberSignal(long id)
+{
+   gLastSignalId = id;
+   if (!IsTesting()) GlobalVariableSet(gKeyLastId, (double)id);
+}
+
+//+------------------------------------------------------------------+
+//| Profit stops (owner's rule). Stop levels form a ladder:          |
+//|   latest position's open +/- BufferDollars, +/- whole StepDollars.|
+//| The EA always uses the highest rung MT4 accepts right now:       |
+//|  - Earlier stops are NOT pulled up when a new position opens, so |
+//|    a small dip can't knock out Position 1 and strand Position 2. |
+//|  - Once price is BufferDollars past the newest open, all stops   |
+//|    move there (Position 2's open + $0.50 for a BUY).             |
+//|  - With all three open, every further StepDollars move lifts all |
+//|    stops by StepDollars.                                         |
+//| Stops only ever tighten and are always in profit.                |
+//+------------------------------------------------------------------+
+void ManageProfitStops(int type)
+{
+   int total = CountPositions(type);
+   if (total < 2) return;   // Position 1 alone: its first stop is set in ProtectPosition1
+
+   RefreshRates();
+   double price   = (type == OP_BUY) ? Bid : Ask;
+   double minDist = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
+   double front   = (type == OP_BUY) ? HighestOpen(OP_BUY) : LowestOpen(OP_SELL);
+   double moved   = (type == OP_BUY) ? price - front : front - price;
+
+   // Highest rung that can legally be placed right now.
+   double steps = MathFloor((moved - BufferDollars - minDist) / StepDollars);
+   if (total < MAX_POSITIONS && steps > 0) steps = 0;   // Stepping starts with all three in
+   if (steps < 0) return;
+   double offset = steps * StepDollars + BufferDollars;
+   double target = NormalizeDouble((type == OP_BUY) ? front + offset : front - offset, Digits);
+
+   for (int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES) || !IsOurs() || OrderType() != type) continue;
+
+      bool inProfit, tighter;
+      if (type == OP_BUY)
+      {
+         inProfit = target > OrderOpenPrice();
+         tighter  = OrderStopLoss() == 0 || target > OrderStopLoss() + Point / 2.0;
+      }
+      else
+      {
+         inProfit = target < OrderOpenPrice();
+         tighter  = OrderStopLoss() == 0 || target < OrderStopLoss() - Point / 2.0;
+      }
+
+      if (inProfit && tighter && !OrderModify(OrderTicket(), OrderOpenPrice(), target, 0, 0, clrGreen))
+         Print("OrderModify failed on ticket ", OrderTicket(), ". Error ", GetLastError());
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Helpers                                                          |
+//+------------------------------------------------------------------+
+bool IsOurs()
+{
+   return OrderSymbol() == Symbol() && OrderMagicNumber() == MagicNumber;
+}
+
+// type = OP_BUY, OP_SELL, or NONE for both.
+int CountPositions(int type)
+{
+   int count = 0;
+   for (int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES) || !IsOurs()) continue;
+      if (OrderType() != OP_BUY && OrderType() != OP_SELL) continue;
+      if (type == NONE || OrderType() == type) count++;
+   }
+   return count;
+}
+
+double HighestOpen(int type)
+{
+   double highest = 0;
+   for (int i = OrdersTotal() - 1; i >= 0; i--)
+      if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES) && IsOurs() && OrderType() == type)
+         highest = MathMax(highest, OrderOpenPrice());
+   return highest;
+}
+
+double LowestOpen(int type)
+{
+   double lowest = DBL_MAX;
+   for (int i = OrdersTotal() - 1; i >= 0; i--)
+      if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES) && IsOurs() && OrderType() == type)
+         lowest = MathMin(lowest, OrderOpenPrice());
+   return lowest;
+}
+
+bool AllPositionsInProfit()
+{
+   for (int i = OrdersTotal() - 1; i >= 0; i--)
+      if (OrderSelect(i, SELECT_BY_POS, MODE_TRADES) && IsOurs())
+         if (OrderProfit() + OrderSwap() + OrderCommission() <= 0) return false;
+   return true;
+}
+
+// True if this direction's Position 1 is still open: opened with comment
+// "Pos 1", or (if a broker ever drops comments) sized exactly like Position 1.
+bool HasPosition1(int type)
+{
+   for (int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES) || !IsOurs() || OrderType() != type) continue;
+      if (StringFind(OrderComment(), "Pos 1") == 0) return true;
+      if (SizingMode == SIZING_FIXED && MathAbs(OrderLots() - Lots1) < 0.0001) return true;
+   }
+   return false;
+}
+
+// Every position has a stop on the profit side of its open price.
+bool AllPositionsProtected(int type)
+{
+   for (int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES) || !IsOurs() || OrderType() != type) continue;
+      if (OrderStopLoss() == 0) return false;
+      if (type == OP_BUY  && OrderStopLoss() <= OrderOpenPrice()) return false;
+      if (type == OP_SELL && OrderStopLoss() >= OrderOpenPrice()) return false;
+   }
+   return true;
+}
+
+// Loss-side stop distance for a stage: the general safety stop if on,
+// otherwise the Position 1 stop for Position 1. 0 = none.
+double LossStopFor(int stage)
+{
+   if (SafetyStopDollars > 0) return SafetyStopDollars;
+   if (stage == 1 && Position1StopDollars > 0) return Position1StopDollars;
+   if (stage >= 2 && LaterStopDollars > 0) return LaterStopDollars;
+   return 0;
+}
+
+// True if one of our Position 2/3 trades closed at a loss within the cooldown.
+bool RecentFailedAdd()
+{
+   if (AddCooldownMinutes <= 0) return false;
+   int checked = 0;
+   for (int i = OrdersHistoryTotal() - 1; i >= 0 && checked < 30; i--)
+   {
+      if (!OrderSelect(i, SELECT_BY_POS, MODE_HISTORY) || !IsOurs()) continue;
+      if (OrderType() != OP_BUY && OrderType() != OP_SELL) continue;
+      checked++;
+      if (TimeCurrent() - OrderCloseTime() > AddCooldownMinutes * 60) continue;
+      string c = OrderComment();
+      if ((StringFind(c, "Pos 2") == 0 || StringFind(c, "Pos 3") == 0) &&
+          OrderProfit() + OrderSwap() + OrderCommission() < 0)
+         return true;
+   }
+   return false;
+}
+
+// True during the server hours in which no new Position 1 may open.
+// Open positions are still managed, and adds to a running stack are allowed.
+bool InNoEntryHours()
+{
+   if (NoEntryStartHour == NoEntryEndHour) return false;
+   int h = TimeHour(TimeCurrent());
+   if (NoEntryStartHour < NoEntryEndHour) return h >= NoEntryStartHour && h < NoEntryEndHour;
+   return h >= NoEntryStartHour || h < NoEntryEndHour;   // window crosses midnight
+}
+
+string HourText(int h) { return (h < 10 ? "0" : "") + IntegerToString(h) + ":00"; }
+
+// Panel text for the daily limits that are switched on. Empty when none are.
+string DailyLimitsText(double start)
+{
+   string t = "";
+   if (DailyGoalDollars > 0)       t += ", no new trades at +$" + DoubleToString(DailyGoalDollars, 0);
+   if (DailyProfitStopDollars > 0) t += ", close all at +$" + DoubleToString(DailyProfitStopDollars, 0);
+   if (DailyLossLimitPercent > 0)  t += ", stop day at -$" + DoubleToString(start * DailyLossLimitPercent / 100.0, 0);
+   if (t == "") return "  |  no daily limit";
+   return "  |" + StringSubstr(t, 1);
+}
+
+// Panel line for the day lock.
+string DayLockText()
+{
+   if (DayLockArmDollars <= 0) return "Day lock: off";
+   double peak = GlobalVariableCheck(gKeyDayPeak) ? GlobalVariableGet(gKeyDayPeak) : 0;
+   if (peak < DayLockArmDollars)
+      return "Day lock: arms once $" + DoubleToString(DayLockArmDollars, 0) + " is banked today (banked best: $" + DoubleToString(peak, 2) + ")";
+   return "Day lock: ARMED. Best banked $" + DoubleToString(peak, 2) + ", stops the day at +$" +
+          DoubleToString(peak * DayLockKeepPercent / 100.0, 2);
+}
+
+//+------------------------------------------------------------------+
+//| v1.30 additions                                                  |
+//+------------------------------------------------------------------+
+// Latest time new Position 1 entries are paused until: after a Position 1
+// loss-stop hit (read from history, so it survives restarts) or after a
+// big winning stack.
+datetime EntryPauseUntil()
+{
+   datetime until = 0;
+   if (GlobalVariableCheck(gKeyBurstUntil)) until = (datetime)GlobalVariableGet(gKeyBurstUntil);
+   if (StopoutCooldownMinutes <= 0) return until;
+
+   int checked = 0;
+   for (int i = OrdersHistoryTotal() - 1; i >= 0 && checked < 30; i--)
+   {
+      if (!OrderSelect(i, SELECT_BY_POS, MODE_HISTORY) || !IsOurs()) continue;
+      if (OrderType() != OP_BUY && OrderType() != OP_SELL) continue;
+      checked++;
+      if (StringFind(OrderComment(), "Pos 1") != 0) continue;
+      double sl = OrderStopLoss();
+      if (sl == 0) continue;
+      bool lossSide = (OrderType() == OP_BUY) ? sl < OrderOpenPrice() : sl > OrderOpenPrice();
+      bool atStop   = (OrderType() == OP_BUY) ? OrderClosePrice() <= sl + 0.05 : OrderClosePrice() >= sl - 0.05;
+      if (!lossSide || !atStop) continue;
+      datetime pauseEnd = OrderCloseTime() + StopoutCooldownMinutes * 60;
+      if (pauseEnd > until) until = pauseEnd;
+   }
+   return until;
+}
+
+// Chop filter: the 2-hour move must be at least ChopATRMult x ATR(14).
+bool ChopOk()
+{
+   if (ChopATRMult <= 0) return true;
+   int tfMinutes = PeriodSeconds(TrendTimeframe) / 60;
+   double atr = iATR(Symbol(), TrendTimeframe, 14, 1);
+   double c1  = iClose(Symbol(), TrendTimeframe, 1);
+   double cN  = iClose(Symbol(), TrendTimeframe, 1 + TrendLongMinutes / tfMinutes);
+   if (atr <= 0 || c1 <= 0 || cN <= 0) return true;
+   return MathAbs(c1 - cN) >= ChopATRMult * atr;
+}
+
+// Trend exit: with 1 bar this is the previous behaviour; with more, the
+// exit reading must point against the trade on that many closed bars in a row.
+bool ReversalConfirmed(int against)
+{
+   if (ReversalConfirmBars <= 1) return ExitTrendDirection() == against;
+   int tfMinutes = PeriodSeconds(TrendTimeframe) / 60;
+   for (int k = 1; k <= ReversalConfirmBars; k++)
+   {
+      double c  = iClose(Symbol(), TrendTimeframe, k);
+      double ps = iClose(Symbol(), TrendTimeframe, k + ExitShortMinutes / tfMinutes);
+      double pl = iClose(Symbol(), TrendTimeframe, k + ExitLongMinutes / tfMinutes);
+      if (c <= 0 || ps <= 0 || pl <= 0) return false;
+      int dir = (c > ps && c > pl) ? OP_BUY : (c < ps && c < pl) ? OP_SELL : NONE;
+      if (dir != against) return false;
+   }
+   return true;
+}
+
+// Post-burst pause: when a stack closes with at least PostBurstDollars.
+void TrackStack(int count)
+{
+   if (count > 0)
+   {
+      if (!gWasInStack) { gWasInStack = true; gStackStartBal = AccountBalance(); }
+      return;
+   }
+   if (!gWasInStack) return;
+   gWasInStack = false;
+   double pnl = AccountBalance() - gStackStartBal;
+   if (PostBurstCooldownMinutes > 0 && pnl >= PostBurstDollars)
+   {
+      GlobalVariableSet(gKeyBurstUntil, (double)(TimeCurrent() + PostBurstCooldownMinutes * 60));
+      Print("Stack closed +$", DoubleToString(pnl, 2), ". Pausing new entries ", PostBurstCooldownMinutes, " min.");
+   }
+}
+
+// True if the currently selected order is a Position 1.
+bool SelectedIsPosition1()
+{
+   if (StringFind(OrderComment(), "Pos 1") == 0) return true;
+   return SizingMode == SIZING_FIXED && MathAbs(OrderLots() - Lots1) < 0.0001;
+}
+
+// Failsafe: any position with no stop at all gets its loss-side stop
+// (Position 1 stop, or the general safety stop).
+// Covers trades opened before the setting was switched on.
+// If price is already past that level, close the trade now.
+// Returns true if a position was closed.
+bool ApplySafetyStops(int type)
+{
+   bool closedAny = false;
+   RefreshRates();
+   double price   = (type == OP_BUY) ? Bid : Ask;
+   double minDist = MarketInfo(Symbol(), MODE_STOPLEVEL) * Point;
+   for (int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES) || !IsOurs() || OrderType() != type) continue;
+      if (OrderStopLoss() != 0) continue;
+      double dist = LossStopFor(SelectedIsPosition1() ? 1 : 2);
+      if (dist <= 0) continue;
+
+      double sl = NormalizeDouble((type == OP_BUY) ? OrderOpenPrice() - dist
+                                                   : OrderOpenPrice() + dist, Digits);
+      bool legal = (type == OP_BUY) ? price - sl >= minDist : sl - price >= minDist;
+      if (legal)
+      {
+         if (!OrderModify(OrderTicket(), OrderOpenPrice(), sl, 0, 0, clrGreen))
+            Print("Safety stop failed on ticket ", OrderTicket(), ". Error ", GetLastError());
+      }
+      else if (OrderClose(OrderTicket(), OrderLots(), price, SlippagePoints, clrOrange))
+      {
+         closedAny = true;
+         SetStatus("Safety stop level already passed: closed ticket " + IntegerToString(OrderTicket()) + ".");
+      }
+      else
+         Print("Safety close failed on ticket ", OrderTicket(), ". Error ", GetLastError());
+   }
+   return closedAny;
+}
+
+// Closes positions of this type whose stop is missing or not in profit.
+// Returns true if anything was closed.
+bool CloseUnprotected(int type, string reason)
+{
+   bool   closedAny = false;
+   double result    = 0;
+   for (int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES) || !IsOurs() || OrderType() != type) continue;
+      bool protectedStop = OrderStopLoss() != 0 &&
+                           ((type == OP_BUY  && OrderStopLoss() > OrderOpenPrice()) ||
+                            (type == OP_SELL && OrderStopLoss() < OrderOpenPrice()));
+      if (protectedStop) continue;
+
+      double pnl = OrderProfit() + OrderSwap() + OrderCommission();
+      RefreshRates();
+      double price = (type == OP_BUY) ? Bid : Ask;
+      if (OrderClose(OrderTicket(), OrderLots(), price, SlippagePoints, clrOrange))
+      {
+         closedAny = true;
+         result   += pnl;
+      }
+      else
+         Print("Trend-reversal close failed on ticket ", OrderTicket(), ". Error ", GetLastError());
+   }
+   if (closedAny)
+      SetStatus(reason + ": closed unprotected position(s), result $" + DoubleToString(result, 2) + ".");
+   return closedAny;
+}
+
+void CloseAll()
+{
+   for (int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if (!OrderSelect(i, SELECT_BY_POS, MODE_TRADES) || !IsOurs()) continue;
+      if (OrderType() != OP_BUY && OrderType() != OP_SELL) continue;
+
+      RefreshRates();
+      double price = (OrderType() == OP_BUY) ? Bid : Ask;
+      if (!OrderClose(OrderTicket(), OrderLots(), price, SlippagePoints, clrWhite))
+         Print("OrderClose failed on ticket ", OrderTicket(), ". Error ", GetLastError());
+   }
+}
+//+------------------------------------------------------------------+
